@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ContentStatus {
+  IDEA
+  RESEARCH
+  DRAFT
+  AI_GENERATED
+  HUMAN_REVIEW
+  APPROVED
+  PUBLISHED
+  UPDATED
+}
+
+enum JobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum ContentLanguage {
+  en
+  pt
+  fr
+}
+
+model Site {
+  id             String   @id @default(cuid())
+  name           String
+  baseUrl        String   @unique
+  wpUsername     String
+  wpAppPassword  String
+  rankMathActive Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  categories Category[]
+  pages      SitePage[]
+  contents   ContentItem[]
+  knowledge  BusinessFact[]
+  jobs       Job[]
+}
+
+model Category {
+  id           String   @id @default(cuid())
+  siteId       String
+  wpCategoryId Int?
+  name         String
+  slug         String
+  parentId     String?
+  createdAt    DateTime @default(now())
+
+  site     Site       @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  contents ContentItem[]
+
+  @@unique([siteId, slug])
+}
+
+model SitePage {
+  id        String   @id @default(cuid())
+  siteId    String
+  wpPostId  Int?
+  title     String
+  url       String
+  summary   String?
+  pageType  String   @default("page")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, url])
+}
+
+model BusinessFact {
+  id        String   @id @default(cuid())
+  siteId    String
+  key       String
+  value     String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@unique([siteId, key])
+}
+
+model ContentItem {
+  id              String          @id @default(cuid())
+  siteId          String
+  categoryId      String?
+  language        ContentLanguage @default(en)
+  status          ContentStatus   @default(IDEA)
+  title           String
+  slug            String?
+  bodyHtml        String?
+  focusKeyword    String?
+  seoTitle        String?
+  metaDescription String?
+  schemaJson      Json?
+  wpPostId        Int?
+  wpUrl           String?
+  parentContentId String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  site     Site      @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  category Category? @relation(fields: [categoryId], references: [id])
+  parent   ContentItem?  @relation("Translations", fields: [parentContentId], references: [id])
+  children ContentItem[] @relation("Translations")
+  usages   AiUsage[]
+  jobs     Job[]
+
+  @@index([siteId, status])
+}
+
+model Job {
+  id        String    @id @default(cuid())
+  siteId    String?
+  contentId String?
+  type      String
+  status    JobStatus @default(QUEUED)
+  error     String?
+  payload   Json?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  site    Site?        @relation(fields: [siteId], references: [id], onDelete: SetNull)
+  content ContentItem? @relation(fields: [contentId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+}
+
+model AiUsage {
+  id           String   @id @default(cuid())
+  contentId    String?
+  provider     String
+  model        String
+  operation    String
+  inputTokens  Int?
+  outputTokens Int?
+  estimatedUsd Float?
+  createdAt    DateTime @default(now())
+
+  content ContentItem? @relation(fields: [contentId], references: [id], onDelete: SetNull)
+}

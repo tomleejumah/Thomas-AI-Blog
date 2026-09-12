@@ -1,0 +1,19 @@
+{
+  "name": "ai-content-engine",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @ace/api & npm run dev -w @ace/admin",
+    "dev:api": "npm run dev -w @ace/api",
+    "dev:admin": "npm run dev -w @ace/admin",
+    "db:generate": "npm run db:generate -w @ace/api",
+    "db:push": "npm run db:push -w @ace/api",
+    "build": "npm run build -w @ace/api && npm run build -w @ace/admin"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
