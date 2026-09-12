@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ace-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ace
+      POSTGRES_PASSWORD: ace_remote_2026
+      POSTGRES_DB: ace
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ace_pg_data:/var/lib/postgresql/data
+
+volumes:
+  ace_pg_data:
