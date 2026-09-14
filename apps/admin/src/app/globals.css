@@ -427,10 +427,59 @@ textarea {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 1rem;
+  padding: 1rem 1.25rem;
   width: min(860px, 100%);
   max-height: 85vh;
   overflow: auto;
+}
+
+.modal-card.modal-wide {
+  width: min(1100px, 96vw);
+}
+
+.form-wide {
+  max-width: none;
+}
+
+.field-hint {
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin: -0.15rem 0 0.25rem;
+}
+
+.rich-editor {
+  min-height: 320px;
+  max-height: 55vh;
+  overflow: auto;
+  background: #0f1419;
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
+  line-height: 1.55;
+}
+
+.rich-editor:focus {
+  outline: 1px solid var(--accent);
+}
+
+.rich-editor h1,
+.rich-editor h2,
+.rich-editor h3,
+.preview-html h1,
+.preview-html h2,
+.preview-html h3 {
+  margin: 1rem 0 0.4rem;
+}
+
+.rich-editor p,
+.preview-html p {
+  margin: 0.55rem 0;
+}
+
+.rich-editor ul,
+.preview-html ul {
+  padding-left: 1.25rem;
 }
 
 .modal-head {

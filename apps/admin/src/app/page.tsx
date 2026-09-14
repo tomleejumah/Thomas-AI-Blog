@@ -18,6 +18,19 @@ type Content = {
   site?: { id: string; name: string };
 };
 
+/** If model stored escaped tags (&lt;p&gt;), turn into real HTML for display/edit */
+function readableHtml(raw: string | null | undefined) {
+  const s = raw || "";
+  if (!s) return "<p></p>";
+  if (s.includes("<") && !s.includes("&lt;")) return s;
+  if (s.includes("&lt;") || s.includes("&gt;")) {
+    const t = document.createElement("textarea");
+    t.innerHTML = s;
+    return t.value;
+  }
+  return s;
+}
+
 export default function DashboardPage() {
   const [contents, setContents] = useState<Content[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -29,6 +42,7 @@ export default function DashboardPage() {
   const [preview, setPreview] = useState<Content | null>(null);
   const [edit, setEdit] = useState<Content | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [editBodyHtml, setEditBodyHtml] = useState("");
 
   const load = useCallback(async () => {
     const [cJson, sJson] = await Promise.all([
@@ -163,7 +177,7 @@ export default function DashboardPage() {
         method: "PATCH",
         body: JSON.stringify({
           title: String(fd.get("title") ?? ""),
-          bodyHtml: String(fd.get("bodyHtml") ?? ""),
+          bodyHtml: editBodyHtml || String(fd.get("bodyHtml") ?? ""),
           seoTitle: String(fd.get("seoTitle") ?? ""),
           metaDescription: String(fd.get("metaDescription") ?? ""),
           focusKeyword: String(fd.get("focusKeyword") ?? ""),
@@ -177,6 +191,12 @@ export default function DashboardPage() {
     } finally {
       setBusyId(null);
     }
+  }
+
+  function openEdit(c: Content) {
+    setMenuId(null);
+    setEdit(c);
+    setEditBodyHtml(readableHtml(c.bodyHtml));
   }
 
   return (
@@ -249,13 +269,7 @@ export default function DashboardPage() {
                     </button>
                     {menuId === c.id ? (
                       <div className="more-menu">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setMenuId(null);
-                            setEdit(c);
-                          }}
-                        >
+                        <button type="button" onClick={() => openEdit(c)}>
                           Edit
                         </button>
                         {canPublish ? (
@@ -348,7 +362,7 @@ export default function DashboardPage() {
 
       {preview ? (
         <div className="modal" role="dialog">
-          <div className="modal-card">
+          <div className="modal-card modal-wide">
             <div className="modal-head">
               <h2>{preview.title}</h2>
               <button type="button" className="ghost" onClick={() => setPreview(null)}>
@@ -357,7 +371,9 @@ export default function DashboardPage() {
             </div>
             <div
               className="preview-html"
-              dangerouslySetInnerHTML={{ __html: preview.bodyHtml || "<p>No body</p>" }}
+              dangerouslySetInnerHTML={{
+                __html: readableHtml(preview.bodyHtml) || "<p>No body</p>",
+              }}
             />
           </div>
         </div>
@@ -365,7 +381,7 @@ export default function DashboardPage() {
 
       {edit ? (
         <div className="modal" role="dialog">
-          <form className="modal-card form" onSubmit={saveEdit}>
+          <form className="modal-card modal-wide form form-wide" onSubmit={saveEdit}>
             <div className="modal-head">
               <h2>Edit</h2>
               <button type="button" className="ghost" onClick={() => setEdit(null)}>
@@ -389,8 +405,16 @@ export default function DashboardPage() {
               <textarea name="metaDescription" rows={2} defaultValue={edit.metaDescription ?? ""} />
             </label>
             <label>
-              Body HTML
-              <textarea name="bodyHtml" rows={12} defaultValue={edit.bodyHtml ?? ""} />
+              Article body
+              <span className="field-hint">Edit like a document — tags are hidden.</span>
+              <div
+                className="rich-editor"
+                contentEditable
+                suppressContentEditableWarning
+                dangerouslySetInnerHTML={{ __html: readableHtml(edit.bodyHtml) }}
+                onInput={(e) => setEditBodyHtml((e.target as HTMLDivElement).innerHTML)}
+              />
+              <input type="hidden" name="bodyHtml" value={editBodyHtml} readOnly />
             </label>
             <button type="submit" disabled={busyId === edit.id}>
               Save
