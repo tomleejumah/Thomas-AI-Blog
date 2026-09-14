@@ -10,22 +10,25 @@ export type GeneratedArticle = {
   schemaJson: Prisma.InputJsonValue;
   provider: string;
   model: string;
+  imagePrompt?: string;
 };
 
-function stubArticle(title: string, language: string): GeneratedArticle {
-  const langNote =
-    language === "pt"
-      ? "Versão PT (stub)."
-      : language === "fr"
-        ? "Version FR (stub)."
-        : "EN stub until API keys are configured.";
+export type GenerateOptions = {
+  brief?: string;
+  provider?: "openai" | "gemini" | "auto";
+  withImage?: boolean;
+};
 
+const SYSTEM_JSON =
+  "You write SEO blog articles. Return JSON with keys: title, bodyHtml, focusKeyword, seoTitle, metaDescription, schemaJson (BlogPosting object), imagePrompt (short English prompt for a featured photo). bodyHtml must use semantic HTML (h2/h3/p/ul/faq). Language must match the requested locale. Do not invent business facts, prices, or guarantees.";
+
+function stubArticle(title: string, language: string): GeneratedArticle {
   return {
     title,
-    bodyHtml: `<h1>${title}</h1><p>${langNote}</p><h2>Overview</h2><p>Replace this with live LLM output after OPENAI_API_KEY or ANTHROPIC_API_KEY is set in .env.</p><h2>FAQ</h2><p><strong>What is this?</strong> A Phase 1 pipeline placeholder.</p>`,
+    bodyHtml: `<h1>${title}</h1><p>Stub — no live LLM key used.</p>`,
     focusKeyword: title.toLowerCase().slice(0, 60),
     seoTitle: `${title} | Guide`,
-    metaDescription: `Learn about ${title}. Structured SEO draft for review.`,
+    metaDescription: `Learn about ${title}.`,
     schemaJson: {
       "@context": "https://schema.org",
       "@type": "BlogPosting",
@@ -34,7 +37,13 @@ function stubArticle(title: string, language: string): GeneratedArticle {
     },
     provider: "stub",
     model: "local-stub",
+    imagePrompt: `Professional photo for article: ${title}`,
   };
+}
+
+function parseArticleJson(raw: string): GeneratedArticle {
+  const cleaned = raw.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+  return JSON.parse(cleaned) as GeneratedArticle;
 }
 
 async function openaiArticle(title: string, language: string, brief?: string) {
@@ -51,27 +60,16 @@ async function openaiArticle(title: string, language: string, brief?: string) {
       model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
       response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content:
-            "You write SEO blog articles. Return JSON with keys: title, bodyHtml, focusKeyword, seoTitle, metaDescription, schemaJson (BlogPosting object). bodyHtml must use semantic HTML (h2/h3/p/ul). Language must match the requested locale. Do not invent business facts.",
-        },
+        { role: "system", content: SYSTEM_JSON },
         {
           role: "user",
-          content: JSON.stringify({
-            title,
-            language,
-            brief: brief ?? null,
-          }),
+          content: JSON.stringify({ title, language, brief: brief ?? null }),
         },
       ],
     }),
   });
 
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`OpenAI ${res.status}: ${text}`);
-  }
+  if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
 
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -80,7 +78,7 @@ async function openaiArticle(title: string, language: string, brief?: string) {
   };
   const raw = data.choices?.[0]?.message?.content;
   if (!raw) throw new Error("OpenAI returned empty content");
-  const parsed = JSON.parse(raw) as GeneratedArticle;
+  const parsed = parseArticleJson(raw);
 
   return {
     article: {
@@ -92,7 +90,156 @@ async function openaiArticle(title: string, language: string, brief?: string) {
   };
 }
 
-export async function generateForContent(contentId: string, brief?: string) {
+async function geminiArticle(title: string, language: string, brief?: string) {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!key) return null;
+
+  const model = process.env.GEMINI_MODEL ?? "gemini-3.6-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [
+        {
+          role: "user",
+          parts: [
+            {
+              text: `${SYSTEM_JSON}\n\nInput:\n${JSON.stringify({
+                title,
+                language,
+                brief: brief ?? null,
+              })}`,
+            },
+          ],
+        },
+      ],
+      generationConfig: {
+        responseMimeType: "application/json",
+      },
+    }),
+  });
+
+  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
+
+  const data = (await res.json()) as {
+    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  };
+  const raw = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+  if (!raw) throw new Error("Gemini returned empty content");
+  const parsed = parseArticleJson(raw);
+
+  return {
+    article: {
+      ...parsed,
+      provider: "gemini",
+      model,
+    },
+    usage: {
+      prompt_tokens: data.usageMetadata?.promptTokenCount,
+      completion_tokens: data.usageMetadata?.candidatesTokenCount,
+    },
+  };
+}
+
+/** Featured image bytes — OpenAI Images, then Gemini Imagen */
+export async function generateFeaturedImageBytes(prompt: string): Promise<{
+  bytes: Buffer;
+  mime: string;
+  provider: string;
+  model: string;
+} | null> {
+  const errors: string[] = [];
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    try {
+      const model = process.env.OPENAI_IMAGE_MODEL ?? "dall-e-3";
+      const payload: Record<string, unknown> = {
+        model,
+        prompt: prompt.slice(0, 1000),
+        n: 1,
+        size: model.includes("dall-e-3") ? "1792x1024" : "1024x1024",
+      };
+      // dall-e-2/3 support b64; newer image models may not
+      if (model.startsWith("dall-e")) {
+        payload.response_format = "b64_json";
+      }
+
+      const res = await fetch("https://api.openai.com/v1/images/generations", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${openaiKey}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+      if (!res.ok) throw new Error(`OpenAI image ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as {
+        data?: Array<{ b64_json?: string; url?: string }>;
+      };
+      const item = data.data?.[0];
+      if (item?.b64_json) {
+        return {
+          bytes: Buffer.from(item.b64_json, "base64"),
+          mime: "image/png",
+          provider: "openai",
+          model,
+        };
+      }
+      if (item?.url) {
+        const imgRes = await fetch(item.url);
+        if (!imgRes.ok) throw new Error(`OpenAI image download ${imgRes.status}`);
+        const buf = Buffer.from(await imgRes.arrayBuffer());
+        return { bytes: buf, mime: "image/png", provider: "openai", model };
+      }
+      throw new Error("OpenAI image empty");
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (geminiKey) {
+    try {
+      const model = process.env.GEMINI_IMAGE_MODEL ?? "imagen-3.0-generate-002";
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${encodeURIComponent(geminiKey)}`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          instances: [{ prompt: prompt.slice(0, 1000) }],
+          parameters: { sampleCount: 1 },
+        }),
+      });
+      if (!res.ok) throw new Error(`Gemini image ${res.status}: ${await res.text()}`);
+      const data = (await res.json()) as {
+        predictions?: Array<{ bytesBase64Encoded?: string; mimeType?: string }>;
+      };
+      const pred = data.predictions?.[0];
+      if (!pred?.bytesBase64Encoded) throw new Error("Gemini image empty");
+      return {
+        bytes: Buffer.from(pred.bytesBase64Encoded, "base64"),
+        mime: pred.mimeType ?? "image/png",
+        provider: "gemini",
+        model,
+      };
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  if (errors.length) {
+    throw new Error(`Image generation failed: ${errors.join(" | ")}`);
+  }
+  return null;
+}
+
+export async function generateForContent(
+  contentId: string,
+  options: GenerateOptions = {}
+) {
   const content = await prisma.contentItem.findUnique({
     where: { id: contentId },
     include: { site: true, category: true },
@@ -100,10 +247,34 @@ export async function generateForContent(contentId: string, brief?: string) {
   if (!content) throw new Error("Content not found");
 
   const lang = content.language;
+  const prefer = options.provider ?? "auto";
   let article: GeneratedArticle;
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
 
-  const live = await openaiArticle(content.title, lang, brief);
+  let live: Awaited<ReturnType<typeof openaiArticle>> = null;
+  try {
+    if (prefer === "gemini") {
+      live = await geminiArticle(content.title, lang, options.brief);
+    } else if (prefer === "openai") {
+      live = await openaiArticle(content.title, lang, options.brief);
+    } else {
+      try {
+        live = await openaiArticle(content.title, lang, options.brief);
+      } catch {
+        live = null;
+      }
+      if (!live) live = await geminiArticle(content.title, lang, options.brief);
+    }
+  } catch (err) {
+    if (prefer === "openai") {
+      // OpenAI quota/errors → try Gemini
+      live = await geminiArticle(content.title, lang, options.brief);
+      if (!live) throw err;
+    } else {
+      throw err;
+    }
+  }
+
   if (live) {
     article = live.article;
     usage = live.usage;
@@ -135,5 +306,9 @@ export async function generateForContent(contentId: string, brief?: string) {
     },
   });
 
-  return { content: updated, provider: article.provider };
+  return {
+    content: updated,
+    provider: article.provider,
+    imagePrompt: article.imagePrompt ?? `Featured image for: ${article.title}`,
+  };
 }

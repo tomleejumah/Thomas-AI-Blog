@@ -1,27 +1,38 @@
-# Deploy admin (apps/admin) on Vercel
+# Architecture (final)
 
-## Project settings
+```
+Browser → https://thomas-ai-blog-admin.vercel.app   (UI on Vercel)
+       → https://api.tommlyjumah.dev/ai-content/*   (API via Cloudflare tunnel)
+            → cloudflared → nginx :80 → ace-api :4010 on server-remote
+```
 
-1. Import `tomleejumah/Thomas-AI-Blog` from GitHub.
-2. **Root Directory:** `apps/admin` (Critical Files → Edit).
-3. Framework: Next.js (auto).
-4. Install / Build (from `apps/admin/vercel.json`, or set manually):
-   - **Install:** `cd ../.. && npm install`
-   - **Build:** `cd ../.. && npm run build -w @ace/admin`
-5. Output: default Next.js (`.next`).
+- **UI:** Vercel only. Not Cloudflare-hosted.
+- **API:** Cloudflare tunnel already points `api.tommlyjumah.dev` → nginx on server-remote. We add `/ai-content/` → `:4010`.
+- **Tailscale was temporary** so we could test `:4010` before nginx. Vercel cannot reach Tailscale IPs — that is why Overview shows API Offline.
 
-## Environment variables (Production)
+## One-time on server-remote (needs your sudo password)
+
+```bash
+ssh server-remote
+bash /home/server/Apis/thomas-ai-blog/deploy/apply-nginx-ai-content.sh
+curl -sS https://api.tommlyjumah.dev/ai-content/health
+```
+
+## Vercel env (then Redeploy)
 
 | Name | Value |
 |------|--------|
-| `NEXT_PUBLIC_API_URL` | `https://api.tommlyjumah.dev/ai-content` once nginx is live; until then use Tailscale `http://100.84.133.5:4010` |
+| `NEXT_PUBLIC_API_URL` | `https://api.tommlyjumah.dev/ai-content` |
 
-After changing env, Redeploy.
+Root Directory: `apps/admin`  
+Install: `cd ../.. && npm install`  
+Build: `cd ../.. && npm run build -w @ace/admin`
 
-## CORS on API
+## Monitor API
 
-API allows `ADMIN_ORIGIN` (comma-separated) plus any `https://*.vercel.app`. Set on server-remote `.env` e.g.:
-
-```
-ADMIN_ORIGIN=https://your-app.vercel.app,http://localhost:3000
+```bash
+ssh server-remote
+pm2 logs ace-api
+pm2 status
+curl -sS http://127.0.0.1:4010/health
 ```

@@ -1,43 +1,350 @@
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+"use client";
 
-async function getHealth() {
-  try {
-    const res = await fetch(`${API}/health`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
+import { FormEvent, useCallback, useEffect, useState } from "react";
+import { api } from "@/lib/api";
+
+type Site = { id: string; name: string; baseUrl: string };
+type Content = {
+  id: string;
+  title: string;
+  status: string;
+  language: string;
+  siteId: string;
+  bodyHtml?: string | null;
+  seoTitle?: string | null;
+  metaDescription?: string | null;
+  focusKeyword?: string | null;
+  wpUrl?: string | null;
+  site?: { id: string; name: string };
+};
+
+export default function DashboardPage() {
+  const [contents, setContents] = useState<Content[]>([]);
+  const [sites, setSites] = useState<Site[]>([]);
+  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [preview, setPreview] = useState<Content | null>(null);
+  const [edit, setEdit] = useState<Content | null>(null);
+
+  const load = useCallback(async () => {
+    const [cJson, sJson] = await Promise.all([
+      api<{ contents: Content[] }>("/content"),
+      api<{ sites: Site[] }>("/sites"),
+    ]);
+    setContents(cJson.contents ?? []);
+    setSites(sJson.sites ?? []);
+  }, []);
+
+  useEffect(() => {
+    load().catch((err) => setError(err instanceof Error ? err.message : "Failed"));
+  }, [load]);
+
+  async function onCreate(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setCreating(true);
+    setError("");
+    setMsg("");
+    const fd = new FormData(e.currentTarget);
+    const payload = {
+      siteId: String(fd.get("siteId") ?? ""),
+      title: String(fd.get("title") ?? ""),
+      language: String(fd.get("language") ?? "en"),
+      brief: String(fd.get("brief") ?? "") || undefined,
+      autoGenerate: fd.get("autoGenerate") === "on",
+    };
+    try {
+      const { content } = await api<{ content: Content }>("/content", {
+        method: "POST",
+        body: JSON.stringify({
+          siteId: payload.siteId,
+          title: payload.title,
+          language: payload.language,
+        }),
+      });
+      if (payload.autoGenerate) {
+        setBusyId(content.id);
+        await api(`/content/${content.id}/generate`, {
+          method: "POST",
+          body: JSON.stringify({
+            provider: "auto",
+            brief: payload.brief,
+          }),
+        });
+        setMsg(`Generated: ${content.title}`);
+      } else {
+        setMsg(`Idea saved: ${content.title}`);
+      }
+      e.currentTarget.reset();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Create failed");
+    } finally {
+      setBusyId(null);
+      setCreating(false);
+    }
   }
-}
 
-export default async function HomePage() {
-  const health = await getHealth();
+  async function runGenerate(id: string) {
+    setBusyId(id);
+    setError("");
+    setMsg("");
+    try {
+      const res = await api<{ provider: string }>(`/content/${id}/generate`, {
+        method: "POST",
+        body: JSON.stringify({ provider: "auto" }),
+      });
+      setMsg(`Generated via ${res.provider}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Generate failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function runApprove(id: string) {
+    setBusyId(id);
+    try {
+      await api(`/content/${id}/approve`, { method: "POST", body: "{}" });
+      setMsg("Approved");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Approve failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function runPublish(id: string) {
+    setBusyId(id);
+    try {
+      const res = await api<{ content: Content; imageError?: string }>(
+        `/content/${id}/publish`,
+        {
+          method: "POST",
+          body: JSON.stringify({ withImage: true, status: "draft" }),
+        }
+      );
+      setMsg(
+        res.content.wpUrl
+          ? `Published draft: ${res.content.wpUrl}${res.imageError ? " (image skipped)" : ""}`
+          : "Published draft"
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Publish failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function runDelete(id: string) {
+    if (!confirm("Delete this content item?")) return;
+    setBusyId(id);
+    try {
+      await api(`/content/${id}`, { method: "DELETE" });
+      setMsg("Deleted");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveEdit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!edit) return;
+    setBusyId(edit.id);
+    const fd = new FormData(e.currentTarget);
+    try {
+      await api(`/content/${edit.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: String(fd.get("title") ?? ""),
+          bodyHtml: String(fd.get("bodyHtml") ?? ""),
+          seoTitle: String(fd.get("seoTitle") ?? ""),
+          metaDescription: String(fd.get("metaDescription") ?? ""),
+          focusKeyword: String(fd.get("focusKeyword") ?? ""),
+        }),
+      });
+      setEdit(null);
+      setMsg("Saved edits");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusyId(null);
+    }
+  }
 
   return (
     <>
-      <h1>Overview</h1>
+      <h1>Dashboard</h1>
       <p className="lead">
-        Your admin for planning, generating, reviewing, and publishing to WordPress.
-        API keys stay on the server — plug them into <code>.env</code> when ready.
+        Create → generate → preview/edit → approve → publish draft to WordPress.
       </p>
-      <div className="grid">
-        <div className="panel">
-          <h2>API</h2>
-          <p>{health?.ok ? "Online" : "Offline — start apps/api"}</p>
-        </div>
-        <div className="panel">
-          <h2>OpenAI key</h2>
-          <p>{health?.keys?.openai ? "Configured" : "Missing (ok for now)"}</p>
-        </div>
-        <div className="panel">
-          <h2>Anthropic key</h2>
-          <p>{health?.keys?.anthropic ? "Configured" : "Missing (ok for now)"}</p>
-        </div>
-        <div className="panel">
-          <h2>Tavily key</h2>
-          <p>{health?.keys?.tavily ? "Configured" : "Missing (ok for now)"}</p>
-        </div>
+
+      <form className="form surface" onSubmit={onCreate}>
+        <label>
+          Site
+          <select name="siteId" required defaultValue="">
+            <option value="" disabled>
+              Select site
+            </option>
+            {sites.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Title / topic
+          <input name="title" required placeholder="Sunset yacht charter tips" />
+        </label>
+        <label>
+          Language
+          <select name="language" defaultValue="en">
+            <option value="en">English</option>
+            <option value="pt">Portuguese</option>
+            <option value="fr">French</option>
+          </select>
+        </label>
+        <label>
+          Brief (optional)
+          <textarea name="brief" rows={2} placeholder="Audience, tone, must-avoid claims…" />
+        </label>
+        <label className="check">
+          <input name="autoGenerate" type="checkbox" defaultChecked />
+          Generate immediately after create
+        </label>
+        <button type="submit" disabled={creating || !!busyId}>
+          {creating || busyId ? (
+            <span className="btn-row">
+              <span className="spinner sm" /> Working…
+            </span>
+          ) : (
+            "Create"
+          )}
+        </button>
+      </form>
+
+      {msg ? <p className="msg ok">{msg}</p> : null}
+      {error ? <p className="msg err">{error}</p> : null}
+
+      <div className="list">
+        {contents.length === 0 ? (
+          <p className="muted">No content yet. Connect a site, then create an idea.</p>
+        ) : (
+          contents.map((c) => {
+            const busy = busyId === c.id;
+            return (
+              <div key={c.id} className="row">
+                <div className="row-main">
+                  <strong>{c.title}</strong>
+                  <div className="meta">
+                    {c.site?.name ?? c.siteId} · {c.status} · {c.language}
+                    {c.wpUrl ? (
+                      <>
+                        {" "}
+                        ·{" "}
+                        <a href={c.wpUrl} target="_blank" rel="noreferrer">
+                          WP
+                        </a>
+                      </>
+                    ) : null}
+                  </div>
+                </div>
+                <div className="actions">
+                  {busy ? <span className="spinner sm" /> : null}
+                  {c.status !== "PUBLISHED" ? (
+                    <button type="button" disabled={busy} onClick={() => runGenerate(c.id)}>
+                      Generate
+                    </button>
+                  ) : null}
+                  {c.bodyHtml ? (
+                    <button type="button" disabled={busy} onClick={() => setPreview(c)}>
+                      Preview
+                    </button>
+                  ) : null}
+                  <button type="button" disabled={busy} onClick={() => setEdit(c)}>
+                    Edit
+                  </button>
+                  {c.bodyHtml && c.status !== "APPROVED" && c.status !== "PUBLISHED" ? (
+                    <button type="button" disabled={busy} onClick={() => runApprove(c.id)}>
+                      Approve
+                    </button>
+                  ) : null}
+                  {(c.status === "APPROVED" || c.status === "HUMAN_REVIEW") && !c.wpUrl ? (
+                    <button type="button" disabled={busy} onClick={() => runPublish(c.id)}>
+                      Publish draft
+                    </button>
+                  ) : null}
+                  <button type="button" className="danger" disabled={busy} onClick={() => runDelete(c.id)}>
+                    Delete
+                  </button>
+                </div>
+              </div>
+            );
+          })
+        )}
       </div>
+
+      {preview ? (
+        <div className="modal" role="dialog">
+          <div className="modal-card">
+            <div className="modal-head">
+              <h2>{preview.title}</h2>
+              <button type="button" className="ghost" onClick={() => setPreview(null)}>
+                Close
+              </button>
+            </div>
+            <div
+              className="preview-html"
+              dangerouslySetInnerHTML={{ __html: preview.bodyHtml || "<p>No body</p>" }}
+            />
+          </div>
+        </div>
+      ) : null}
+
+      {edit ? (
+        <div className="modal" role="dialog">
+          <form className="modal-card form" onSubmit={saveEdit}>
+            <div className="modal-head">
+              <h2>Edit</h2>
+              <button type="button" className="ghost" onClick={() => setEdit(null)}>
+                Cancel
+              </button>
+            </div>
+            <label>
+              Title
+              <input name="title" defaultValue={edit.title} required />
+            </label>
+            <label>
+              SEO title
+              <input name="seoTitle" defaultValue={edit.seoTitle ?? ""} />
+            </label>
+            <label>
+              Focus keyword
+              <input name="focusKeyword" defaultValue={edit.focusKeyword ?? ""} />
+            </label>
+            <label>
+              Meta description
+              <textarea name="metaDescription" rows={2} defaultValue={edit.metaDescription ?? ""} />
+            </label>
+            <label>
+              Body HTML
+              <textarea name="bodyHtml" rows={12} defaultValue={edit.bodyHtml ?? ""} />
+            </label>
+            <button type="submit" disabled={busyId === edit.id}>
+              Save
+            </button>
+          </form>
+        </div>
+      ) : null}
     </>
   );
 }

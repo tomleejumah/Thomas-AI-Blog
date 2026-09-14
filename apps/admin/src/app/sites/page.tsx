@@ -1,8 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000";
+import { api } from "@/lib/api";
 
 export default function SitesPage() {
   const [msg, setMsg] = useState("");
@@ -23,32 +22,20 @@ export default function SitesPage() {
     };
 
     try {
-      const test = await fetch(`${API}/wordpress/test`, {
+      await api("/wordpress/test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const testJson = await test.json();
-      if (!test.ok) throw new Error(testJson?.message ?? testJson?.error ?? "WP test failed");
-
-      const create = await fetch(`${API}/sites`, {
+      const createJson = await api<{ site: { id: string } }>("/sites", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const createJson = await create.json();
-      if (!create.ok) throw new Error(createJson?.error ?? "Save failed");
-
-      const scan = await fetch(`${API}/wordpress/${createJson.site.id}/scan`, {
-        method: "POST",
-      });
-      const scanJson = await scan.json();
-      if (!scan.ok) throw new Error(scanJson?.error ?? "Scan failed");
-
-      setOk(true);
-      setMsg(
-        `Connected. Scanned ${scanJson.scanned} categories.\nSite id: ${createJson.site.id}`
+      const scanJson = await api<{ scanned: number }>(
+        `/wordpress/${createJson.site.id}/scan`,
+        { method: "POST", body: "{}" }
       );
+      setOk(true);
+      setMsg(`Connected. Scanned ${scanJson.scanned} categories.`);
       e.currentTarget.reset();
     } catch (err) {
       setOk(false);
@@ -62,12 +49,13 @@ export default function SitesPage() {
     <>
       <h1>Sites</h1>
       <p className="lead">
-        Connect a WordPress site with Application Password. We test REST, save the site, then scan categories.
+        Connect WordPress once with Application Password. We test REST, save the site, then scan
+        categories for publishing.
       </p>
-      <form className="form panel" onSubmit={onSubmit}>
+      <form className="form surface" onSubmit={onSubmit}>
         <label>
           Site name
-          <input name="name" required placeholder="NGTEC" />
+          <input name="name" required placeholder="LisbonYacht" />
         </label>
         <label>
           Site URL
@@ -82,7 +70,13 @@ export default function SitesPage() {
           <input name="wpAppPassword" required type="password" />
         </label>
         <button type="submit" disabled={busy}>
-          {busy ? "Connecting…" : "Connect & scan"}
+          {busy ? (
+            <span className="btn-row">
+              <span className="spinner sm" /> Connecting…
+            </span>
+          ) : (
+            "Connect & scan"
+          )}
         </button>
         {msg ? <p className={`msg ${ok ? "ok" : "err"}`}>{msg}</p> : null}
       </form>

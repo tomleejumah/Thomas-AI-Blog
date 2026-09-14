@@ -5,10 +5,12 @@ dotenv.config();
 
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import { authRoutes, requireAuth } from "./lib/auth";
 import { healthRoutes } from "./routes/health";
 import { siteRoutes } from "./routes/sites";
 import { wordpressRoutes } from "./routes/wordpress";
 import { contentRoutes } from "./routes/content";
+import { maintenanceRoutes } from "./routes/maintenance";
 
 const port = Number(process.env.API_PORT ?? 4000);
 const configuredOrigins = (process.env.ADMIN_ORIGIN ?? "http://localhost:3000")
@@ -19,7 +21,6 @@ const configuredOrigins = (process.env.ADMIN_ORIGIN ?? "http://localhost:3000")
 function allowOrigin(origin: string | undefined, cb: (err: Error | null, allow: boolean) => void) {
   if (!origin) return cb(null, true);
   if (configuredOrigins.includes(origin)) return cb(null, true);
-  // Vercel production + preview deployments
   if (/^https:\/\/[\w-]+\.vercel\.app$/i.test(origin)) return cb(null, true);
   return cb(null, false);
 }
@@ -27,9 +28,22 @@ function allowOrigin(origin: string | undefined, cb: (err: Error | null, allow: 
 async function main() {
   const app = Fastify({ logger: true });
 
-  await app.register(cors, { origin: allowOrigin });
+  await app.register(cors, {
+    origin: allowOrigin,
+    allowedHeaders: ["Content-Type", "Authorization", "x-admin-token"],
+  });
+
+  app.addHook("preHandler", async (req, reply) => {
+    const url = req.url.split("?")[0];
+    if (url === "/health" && req.method === "GET") return;
+    if (url === "/auth/login" && req.method === "POST") return;
+    await requireAuth(req, reply);
+    if (reply.sent) return;
+  });
 
   await app.register(healthRoutes);
+  await app.register(authRoutes, { prefix: "/auth" });
+  await app.register(maintenanceRoutes, { prefix: "/maintenance" });
   await app.register(siteRoutes, { prefix: "/sites" });
   await app.register(wordpressRoutes, { prefix: "/wordpress" });
   await app.register(contentRoutes, { prefix: "/content" });
