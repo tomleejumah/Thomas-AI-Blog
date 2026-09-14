@@ -346,9 +346,71 @@ textarea {
   border-color: #5a3030;
 }
 
-.subhead {
-  margin: 1.5rem 0 0.4rem;
-  font-size: 1.1rem;
+.dash-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.add-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  font-size: 1.6rem;
+  line-height: 1;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.help-box {
+  background: #121820;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.75rem 0.9rem;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.help-box p {
+  margin: 0.35rem 0;
+}
+
+.more-wrap {
+  position: relative;
+}
+
+.more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  min-width: 200px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.35rem;
+  display: grid;
+  gap: 0.25rem;
+  z-index: 20;
+}
+
+.more-menu button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  color: var(--text);
+  border: 0;
+  border-radius: 6px;
+  padding: 0.5rem 0.6rem;
+}
+
+.more-menu button:hover {
+  background: #121820;
+}
+
+.more-menu button.danger {
+  color: #ff7b7b;
 }
 
 .modal {

@@ -25,8 +25,10 @@ export default function DashboardPage() {
   const [msg, setMsg] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [showCreate, setShowCreate] = useState(false);
   const [preview, setPreview] = useState<Content | null>(null);
   const [edit, setEdit] = useState<Content | null>(null);
+  const [menuId, setMenuId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const [cJson, sJson] = await Promise.all([
@@ -67,16 +69,13 @@ export default function DashboardPage() {
         setBusyId(content.id);
         await api(`/content/${content.id}/generate`, {
           method: "POST",
-          body: JSON.stringify({
-            provider: "auto",
-            brief: payload.brief,
-          }),
+          body: JSON.stringify({ provider: "auto", brief: payload.brief }),
         });
         setMsg(`Generated: ${content.title}`);
       } else {
         setMsg(`Idea saved: ${content.title}`);
       }
-      e.currentTarget.reset();
+      setShowCreate(false);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed");
@@ -87,6 +86,7 @@ export default function DashboardPage() {
   }
 
   async function runGenerate(id: string) {
+    setMenuId(null);
     setBusyId(id);
     setError("");
     setMsg("");
@@ -104,22 +104,20 @@ export default function DashboardPage() {
     }
   }
 
-  async function runApprove(id: string) {
+  async function runApprovePublish(id: string) {
+    setMenuId(null);
+    if (
+      !confirm(
+        "Approve this article and publish it to WordPress as a DRAFT?\n\nYou can delete the draft in WP anytime."
+      )
+    ) {
+      return;
+    }
     setBusyId(id);
+    setError("");
+    setMsg("");
     try {
       await api(`/content/${id}/approve`, { method: "POST", body: "{}" });
-      setMsg("Approved");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Approve failed");
-    } finally {
-      setBusyId(null);
-    }
-  }
-
-  async function runPublish(id: string) {
-    setBusyId(id);
-    try {
       const res = await api<{ content: Content; imageError?: string }>(
         `/content/${id}/publish`,
         {
@@ -129,7 +127,7 @@ export default function DashboardPage() {
       );
       setMsg(
         res.content.wpUrl
-          ? `Published draft: ${res.content.wpUrl}${res.imageError ? " (image skipped)" : ""}`
+          ? `Draft on WP: ${res.content.wpUrl}${res.imageError ? " (no featured image)" : ""}`
           : "Published draft"
       );
       await load();
@@ -141,7 +139,8 @@ export default function DashboardPage() {
   }
 
   async function runDelete(id: string) {
-    if (!confirm("Delete this content item?")) return;
+    setMenuId(null);
+    if (!confirm("Delete this item from the dashboard?")) return;
     setBusyId(id);
     try {
       await api(`/content/${id}`, { method: "DELETE" });
@@ -171,7 +170,7 @@ export default function DashboardPage() {
         }),
       });
       setEdit(null);
-      setMsg("Saved edits");
+      setMsg("Saved");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -182,65 +181,27 @@ export default function DashboardPage() {
 
   return (
     <>
-      <h1>Dashboard</h1>
-      <p className="lead">
-        Create → generate → preview/edit → approve → publish draft to WordPress.
-      </p>
-
-      <form className="form surface" onSubmit={onCreate}>
-        <label>
-          Site
-          <select name="siteId" required defaultValue="">
-            <option value="" disabled>
-              Select site
-            </option>
-            {sites.map((s) => (
-              <option key={s.id} value={s.id}>
-                {s.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Title / topic
-          <input name="title" required placeholder="Sunset yacht charter tips" />
-        </label>
-        <label>
-          Language
-          <select name="language" defaultValue="en">
-            <option value="en">English</option>
-            <option value="pt">Portuguese</option>
-            <option value="fr">French</option>
-          </select>
-        </label>
-        <label>
-          Brief (optional)
-          <textarea name="brief" rows={2} placeholder="Audience, tone, must-avoid claims…" />
-        </label>
-        <label className="check">
-          <input name="autoGenerate" type="checkbox" defaultChecked />
-          Generate immediately after create
-        </label>
-        <button type="submit" disabled={creating || !!busyId}>
-          {creating || busyId ? (
-            <span className="btn-row">
-              <span className="spinner sm" /> Working…
-            </span>
-          ) : (
-            "Create"
-          )}
+      <div className="dash-head">
+        <div>
+          <h1>Dashboard</h1>
+          <p className="lead">Your content queue — generate, review, then send a draft to WordPress.</p>
+        </div>
+        <button type="button" className="add-btn" onClick={() => setShowCreate(true)} title="New content">
+          +
         </button>
-      </form>
+      </div>
 
       {msg ? <p className="msg ok">{msg}</p> : null}
       {error ? <p className="msg err">{error}</p> : null}
 
       <div className="list">
         {contents.length === 0 ? (
-          <p className="muted">No content yet. Connect a site, then create an idea.</p>
+          <p className="muted">Nothing yet. Hit + to add a topic.</p>
         ) : (
           contents.map((c) => {
             const busy = busyId === c.id;
+            const canPublish =
+              !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED";
             return (
               <div key={c.id} className="row">
                 <div className="row-main">
@@ -252,7 +213,7 @@ export default function DashboardPage() {
                         {" "}
                         ·{" "}
                         <a href={c.wpUrl} target="_blank" rel="noreferrer">
-                          WP
+                          WP draft
                         </a>
                       </>
                     ) : null}
@@ -260,38 +221,130 @@ export default function DashboardPage() {
                 </div>
                 <div className="actions">
                   {busy ? <span className="spinner sm" /> : null}
-                  {c.status !== "PUBLISHED" ? (
+                  {!c.wpUrl ? (
                     <button type="button" disabled={busy} onClick={() => runGenerate(c.id)}>
-                      Generate
+                      {c.bodyHtml ? "Regenerate" : "Generate"}
                     </button>
                   ) : null}
                   {c.bodyHtml ? (
-                    <button type="button" disabled={busy} onClick={() => setPreview(c)}>
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => {
+                        setMenuId(null);
+                        setPreview(c);
+                      }}
+                    >
                       Preview
                     </button>
                   ) : null}
-                  <button type="button" disabled={busy} onClick={() => setEdit(c)}>
-                    Edit
-                  </button>
-                  {c.bodyHtml && c.status !== "APPROVED" && c.status !== "PUBLISHED" ? (
-                    <button type="button" disabled={busy} onClick={() => runApprove(c.id)}>
-                      Approve
+                  <div className="more-wrap">
+                    <button
+                      type="button"
+                      className="ghost"
+                      disabled={busy}
+                      onClick={() => setMenuId(menuId === c.id ? null : c.id)}
+                    >
+                      ···
                     </button>
-                  ) : null}
-                  {(c.status === "APPROVED" || c.status === "HUMAN_REVIEW") && !c.wpUrl ? (
-                    <button type="button" disabled={busy} onClick={() => runPublish(c.id)}>
-                      Publish draft
-                    </button>
-                  ) : null}
-                  <button type="button" className="danger" disabled={busy} onClick={() => runDelete(c.id)}>
-                    Delete
-                  </button>
+                    {menuId === c.id ? (
+                      <div className="more-menu">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setMenuId(null);
+                            setEdit(c);
+                          }}
+                        >
+                          Edit
+                        </button>
+                        {canPublish ? (
+                          <button type="button" onClick={() => runApprovePublish(c.id)}>
+                            Approve &amp; publish draft
+                          </button>
+                        ) : null}
+                        <button type="button" className="danger" onClick={() => runDelete(c.id)}>
+                          Delete
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
                 </div>
               </div>
             );
           })
         )}
       </div>
+
+      {showCreate ? (
+        <div className="modal" role="dialog">
+          <form className="modal-card form" onSubmit={onCreate}>
+            <div className="modal-head">
+              <h2>New content</h2>
+              <button type="button" className="ghost" onClick={() => setShowCreate(false)}>
+                Close
+              </button>
+            </div>
+            <div className="help-box">
+              <p>
+                <strong>Title</strong> — topic for the article.
+              </p>
+              <p>
+                <strong>Brief</strong> — guidelines only (audience, tone, what not to invent). Not the full post.
+              </p>
+              <p>
+                <strong>Generate</strong> — AI writes the full blog + SEO.
+              </p>
+              <p>
+                <strong>Approve &amp; publish</strong> — one step: accept the draft and send it to WordPress as a{" "}
+                <em>draft</em> (featured image if the image API works).
+              </p>
+            </div>
+            <label>
+              Site
+              <select name="siteId" required defaultValue="">
+                <option value="" disabled>
+                  Select site
+                </option>
+                {sites.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Title / topic
+              <input name="title" required placeholder="Sunset yacht charter tips" />
+            </label>
+            <label>
+              Language
+              <select name="language" defaultValue="en">
+                <option value="en">English</option>
+                <option value="pt">Portuguese</option>
+                <option value="fr">French</option>
+              </select>
+            </label>
+            <label>
+              Brief (guidelines)
+              <textarea name="brief" rows={3} placeholder="Audience, tone, must-avoid claims…" />
+            </label>
+            <label className="check">
+              <input name="autoGenerate" type="checkbox" defaultChecked />
+              Generate full article now
+            </label>
+            <button type="submit" disabled={creating || !!busyId}>
+              {creating || busyId ? (
+                <span className="btn-row">
+                  <span className="spinner sm" /> Working…
+                </span>
+              ) : (
+                "Create"
+              )}
+            </button>
+          </form>
+        </div>
+      ) : null}
 
       {preview ? (
         <div className="modal" role="dialog">
