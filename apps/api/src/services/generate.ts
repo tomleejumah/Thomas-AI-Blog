@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { researchTopic } from "./research";
 
 export type GeneratedArticle = {
   title: string;
@@ -46,7 +47,12 @@ function userPayload(
   title: string,
   language: string,
   brief?: string,
-  site?: { name?: string; baseUrl?: string; category?: string | null }
+  site?: { name?: string; baseUrl?: string; category?: string | null },
+  research?: {
+    provider: string;
+    answers: string[];
+    sources: Array<{ title: string; url: string; snippet: string }>;
+  } | null
 ) {
   const shapes = [
     "narrative journey with sensory scenes",
@@ -69,6 +75,15 @@ function userPayload(
           name: site.name ?? null,
           url: site.baseUrl ?? null,
           category: site.category ?? null,
+        }
+      : null,
+    research: research
+      ? {
+          provider: research.provider,
+          answers: research.answers,
+          sources: research.sources,
+          instruction:
+            "Use research for accuracy and FAQ angles. Do not invent business facts. Cite ideas, not raw URLs in body unless natural.",
         }
       : null,
     requirements: {
@@ -106,11 +121,19 @@ function parseArticleJson(raw: string): GeneratedArticle {
   return JSON.parse(cleaned) as GeneratedArticle;
 }
 
+type SiteCtx = { name?: string; baseUrl?: string; category?: string | null };
+type ResearchCtx = {
+  provider: string;
+  answers: string[];
+  sources: Array<{ title: string; url: string; snippet: string }>;
+};
+
 async function openaiArticle(
   title: string,
   language: string,
   brief?: string,
-  site?: { name?: string; baseUrl?: string; category?: string | null }
+  site?: SiteCtx,
+  research?: ResearchCtx | null
 ) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
@@ -130,7 +153,7 @@ async function openaiArticle(
         { role: "system", content: SYSTEM_JSON },
         {
           role: "user",
-          content: userPayload(title, language, brief, site),
+          content: userPayload(title, language, brief, site, research),
         },
       ],
     }),
@@ -161,7 +184,8 @@ async function geminiArticle(
   title: string,
   language: string,
   brief?: string,
-  site?: { name?: string; baseUrl?: string; category?: string | null }
+  site?: SiteCtx,
+  research?: ResearchCtx | null
 ) {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) return null;
@@ -178,7 +202,7 @@ async function geminiArticle(
           role: "user",
           parts: [
             {
-              text: `${SYSTEM_JSON}\n\nInput:\n${userPayload(title, language, brief, site)}`,
+              text: `${SYSTEM_JSON}\n\nInput:\n${userPayload(title, language, brief, site, research)}`,
             },
           ],
         },
@@ -323,27 +347,56 @@ export async function generateForContent(
     baseUrl: content.site.baseUrl,
     category: content.category?.name ?? null,
   };
+
+  let research: ResearchCtx | null = null;
+  let researchError: string | undefined;
+  try {
+    const packet = await researchTopic({
+      title: content.title,
+      language: lang,
+      siteName: content.site.name,
+      category: content.category?.name,
+      brief: options.brief,
+    });
+    if (packet) {
+      research = {
+        provider: packet.provider,
+        answers: packet.answers,
+        sources: packet.sources,
+      };
+      await prisma.aiUsage.create({
+        data: {
+          contentId: content.id,
+          provider: "tavily",
+          model: "search",
+          operation: "research",
+        },
+      });
+    }
+  } catch (err) {
+    researchError = err instanceof Error ? err.message : String(err);
+  }
+
   let article: GeneratedArticle;
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
 
   let live: Awaited<ReturnType<typeof openaiArticle>> = null;
   try {
     if (prefer === "gemini") {
-      live = await geminiArticle(content.title, lang, options.brief, siteCtx);
+      live = await geminiArticle(content.title, lang, options.brief, siteCtx, research);
     } else if (prefer === "openai") {
-      live = await openaiArticle(content.title, lang, options.brief, siteCtx);
+      live = await openaiArticle(content.title, lang, options.brief, siteCtx, research);
     } else {
       try {
-        live = await openaiArticle(content.title, lang, options.brief, siteCtx);
+        live = await openaiArticle(content.title, lang, options.brief, siteCtx, research);
       } catch {
         live = null;
       }
-      if (!live) live = await geminiArticle(content.title, lang, options.brief, siteCtx);
+      if (!live) live = await geminiArticle(content.title, lang, options.brief, siteCtx, research);
     }
   } catch (err) {
     if (prefer === "openai") {
-      // OpenAI quota/errors → try Gemini
-      live = await geminiArticle(content.title, lang, options.brief, siteCtx);
+      live = await geminiArticle(content.title, lang, options.brief, siteCtx, research);
       if (!live) throw err;
     } else {
       throw err;
@@ -384,6 +437,10 @@ export async function generateForContent(
   return {
     content: updated,
     provider: article.provider,
+    research: research
+      ? { provider: research.provider, sources: research.sources.length }
+      : null,
+    researchError,
     imagePrompt: article.imagePrompt ?? `Featured image for: ${article.title}`,
   };
 }

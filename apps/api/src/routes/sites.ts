@@ -47,4 +47,12 @@ export const siteRoutes: FastifyPluginAsync = async (app) => {
       },
     });
   });
+
+  app.delete("/:id", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const existing = await prisma.site.findUnique({ where: { id } });
+    if (!existing) return reply.code(404).send({ error: "Site not found" });
+    await prisma.site.delete({ where: { id } });
+    return { ok: true };
+  });
 };

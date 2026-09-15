@@ -108,7 +108,29 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
         openai,
         gemini,
         tavily: process.env.TAVILY_API_KEY
-          ? { status: "configured" as const, detail: "Key present (not probed)" }
+          ? await (async () => {
+              try {
+                const res = await fetch("https://api.tavily.com/search", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    api_key: process.env.TAVILY_API_KEY,
+                    query: "yacht charter",
+                    max_results: 1,
+                  }),
+                });
+                if (res.status === 401 || res.status === 403) {
+                  return { status: "invalid" as const, detail: `HTTP ${res.status}` };
+                }
+                if (!res.ok) return { status: "down" as const, detail: `HTTP ${res.status}` };
+                return { status: "up" as const, detail: "Search OK — used on Generate" };
+              } catch (err) {
+                return {
+                  status: "down" as const,
+                  detail: err instanceof Error ? err.message : "Network error",
+                };
+              }
+            })()
           : { status: "missing" as const, detail: "Optional research key" },
         perplexity: process.env.PERPLEXITY_API_KEY
           ? { status: "configured" as const, detail: "Key present (not probed)" }
