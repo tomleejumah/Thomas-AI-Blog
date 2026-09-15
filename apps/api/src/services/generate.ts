@@ -155,16 +155,16 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
   const openaiKey = process.env.OPENAI_API_KEY;
   if (openaiKey) {
     try {
-      const model = process.env.OPENAI_IMAGE_MODEL ?? "dall-e-3";
+      const model = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1";
       const payload: Record<string, unknown> = {
         model,
         prompt: prompt.slice(0, 1000),
         n: 1,
-        size: model.includes("dall-e-3") ? "1792x1024" : "1024x1024",
       };
-      // dall-e-2/3 support b64; newer image models may not
-      if (model.startsWith("dall-e")) {
-        payload.response_format = "b64_json";
+      if (model.includes("dall-e")) {
+        payload.size = model.includes("dall-e-3") ? "1792x1024" : "1024x1024";
+      } else {
+        payload.size = "1024x1024";
       }
 
       const res = await fetch("https://api.openai.com/v1/images/generations", {
