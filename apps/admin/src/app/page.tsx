@@ -366,9 +366,26 @@ export default function DashboardPage() {
           <div className="modal-card modal-wide">
             <div className="modal-head">
               <h2>{preview.title}</h2>
-              <button type="button" className="ghost" onClick={() => setPreview(null)}>
-                Close
-              </button>
+              <div className="modal-actions">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const c = preview;
+                    setPreview(null);
+                    openEdit(c);
+                  }}
+                >
+                  Edit
+                </button>
+                <button
+                  type="button"
+                  className="icon-close"
+                  aria-label="Close"
+                  onClick={() => setPreview(null)}
+                >
+                  ×
+                </button>
+              </div>
             </div>
             <div
               className="preview-html"

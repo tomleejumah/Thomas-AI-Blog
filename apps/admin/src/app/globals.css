@@ -541,6 +541,24 @@ textarea {
   margin-bottom: 0.75rem;
 }
 
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-shrink: 0;
+}
+
+.icon-close {
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  font-size: 1.4rem;
+  line-height: 1;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+}
+
 .modal-head h2 {
   margin: 0;
   font-size: 1.1rem;
