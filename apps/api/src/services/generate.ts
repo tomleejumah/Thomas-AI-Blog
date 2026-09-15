@@ -19,8 +19,68 @@ export type GenerateOptions = {
   withImage?: boolean;
 };
 
-const SYSTEM_JSON =
-  "You write SEO blog articles. Return JSON with keys: title, bodyHtml, focusKeyword, seoTitle, metaDescription, schemaJson (BlogPosting object), imagePrompt (short English prompt for a featured photo). bodyHtml must use semantic HTML (h2/h3/p/ul/faq). Language must match the requested locale. Do not invent business facts, prices, or guarantees.";
+const SYSTEM_JSON = `You are an elite magazine-level SEO blog writer and editor (think Condé Nast Traveler / specialist industry longform — not a thin AI outline).
+
+Return ONLY valid JSON with keys:
+title, bodyHtml, focusKeyword, seoTitle, metaDescription, schemaJson (BlogPosting), imagePrompt (vivid English photo brief).
+
+WRITING STANDARD — mandatory:
+- Master-level prose: vivid, sensory, authoritative, fluent. Varied sentence rhythm. No robotic filler, no "In today's world", no keyword stuffing.
+- VERBOSE longform: aim for 1,400–2,200+ words of real content in bodyHtml (not a stub). Deep sections, not bullet dumps alone.
+- Semantic HTML only: h2/h3, p, ul/ol, blockquote when it fits, optional short FAQ.
+- SEO: natural keyword use; unique seoTitle (~50–60 chars) and metaDescription (~150–160 chars).
+- Locale: fully idiomatic in the requested language (en/pt/fr).
+- Facts: do NOT invent prices, guarantees, licenses, phone numbers, or business claims not in the brief.
+- imagePrompt: cinematic and specific.
+
+STRUCTURE VARIETY — critical (do NOT reuse a template):
+- Every article must feel uniquely shaped for THIS site + topic. Never copy a fixed skeleton like Hook → Overview → Tips → FAQ → CTA for every post.
+- Pick a fresh angle and outline each time (examples to rotate among — invent others too): narrative journey; myth-busting; comparison; seasonal playbook; checklist-led with rich prose; interview-style Q&A woven into narrative; "day in the life"; mistake autopsy; local insider guide; decision framework.
+- Vary section count, heading voice, whether FAQ appears, whether lists appear early or late, opening device (scene / question / bold claim / anecdote).
+- Match voice to the site context when provided (yacht charter luxury leisure ≠ corporate renovation blog). Same platform, different souls.
+- If brief/site notes exist, let them bend tone and structure.
+
+Reject thin or formulaic content.`;
+
+function userPayload(
+  title: string,
+  language: string,
+  brief?: string,
+  site?: { name?: string; baseUrl?: string; category?: string | null }
+) {
+  const shapes = [
+    "narrative journey with sensory scenes",
+    "myth-busting expert teardown",
+    "comparison / decision framework",
+    "seasonal or occasion playbook",
+    "insider local guide",
+    "mistake autopsy + fixes",
+    "day-in-the-life itinerary prose",
+    "checklist wrapped in magazine storytelling",
+  ];
+  const shape = shapes[Math.floor(Math.random() * shapes.length)];
+
+  return JSON.stringify({
+    title,
+    language,
+    brief: brief ?? null,
+    site: site
+      ? {
+          name: site.name ?? null,
+          url: site.baseUrl ?? null,
+          category: site.category ?? null,
+        }
+      : null,
+    requirements: {
+      minWords: 1400,
+      tone: "master-level longform blog",
+      depth: "expert, practical, immersive",
+      structuralDirection: shape,
+      uniqueness:
+        "Invent a structure that fits this site and topic; do not reuse a generic template.",
+    },
+  });
+}
 
 function stubArticle(title: string, language: string): GeneratedArticle {
   return {
@@ -46,7 +106,12 @@ function parseArticleJson(raw: string): GeneratedArticle {
   return JSON.parse(cleaned) as GeneratedArticle;
 }
 
-async function openaiArticle(title: string, language: string, brief?: string) {
+async function openaiArticle(
+  title: string,
+  language: string,
+  brief?: string,
+  site?: { name?: string; baseUrl?: string; category?: string | null }
+) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
 
@@ -57,13 +122,15 @@ async function openaiArticle(title: string, language: string, brief?: string) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      model: process.env.OPENAI_MODEL ?? "gpt-4o",
       response_format: { type: "json_object" },
+      temperature: 0.9,
+      max_tokens: 8000,
       messages: [
         { role: "system", content: SYSTEM_JSON },
         {
           role: "user",
-          content: JSON.stringify({ title, language, brief: brief ?? null }),
+          content: userPayload(title, language, brief, site),
         },
       ],
     }),
@@ -84,13 +151,18 @@ async function openaiArticle(title: string, language: string, brief?: string) {
     article: {
       ...parsed,
       provider: "openai",
-      model: data.model ?? process.env.OPENAI_MODEL ?? "gpt-4o-mini",
+      model: data.model ?? process.env.OPENAI_MODEL ?? "gpt-4o",
     },
     usage: data.usage,
   };
 }
 
-async function geminiArticle(title: string, language: string, brief?: string) {
+async function geminiArticle(
+  title: string,
+  language: string,
+  brief?: string,
+  site?: { name?: string; baseUrl?: string; category?: string | null }
+) {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) return null;
 
@@ -106,17 +178,15 @@ async function geminiArticle(title: string, language: string, brief?: string) {
           role: "user",
           parts: [
             {
-              text: `${SYSTEM_JSON}\n\nInput:\n${JSON.stringify({
-                title,
-                language,
-                brief: brief ?? null,
-              })}`,
+              text: `${SYSTEM_JSON}\n\nInput:\n${userPayload(title, language, brief, site)}`,
             },
           ],
         },
       ],
       generationConfig: {
         responseMimeType: "application/json",
+        temperature: 0.9,
+        maxOutputTokens: 8192,
       },
     }),
   });
@@ -248,27 +318,32 @@ export async function generateForContent(
 
   const lang = content.language;
   const prefer = options.provider ?? "auto";
+  const siteCtx = {
+    name: content.site.name,
+    baseUrl: content.site.baseUrl,
+    category: content.category?.name ?? null,
+  };
   let article: GeneratedArticle;
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
 
   let live: Awaited<ReturnType<typeof openaiArticle>> = null;
   try {
     if (prefer === "gemini") {
-      live = await geminiArticle(content.title, lang, options.brief);
+      live = await geminiArticle(content.title, lang, options.brief, siteCtx);
     } else if (prefer === "openai") {
-      live = await openaiArticle(content.title, lang, options.brief);
+      live = await openaiArticle(content.title, lang, options.brief, siteCtx);
     } else {
       try {
-        live = await openaiArticle(content.title, lang, options.brief);
+        live = await openaiArticle(content.title, lang, options.brief, siteCtx);
       } catch {
         live = null;
       }
-      if (!live) live = await geminiArticle(content.title, lang, options.brief);
+      if (!live) live = await geminiArticle(content.title, lang, options.brief, siteCtx);
     }
   } catch (err) {
     if (prefer === "openai") {
       // OpenAI quota/errors → try Gemini
-      live = await geminiArticle(content.title, lang, options.brief);
+      live = await geminiArticle(content.title, lang, options.brief, siteCtx);
       if (!live) throw err;
     } else {
       throw err;

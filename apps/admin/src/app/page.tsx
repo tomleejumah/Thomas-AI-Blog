@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import DocEditor from "@/components/DocEditor";
 import { api } from "@/lib/api";
 
 type Site = { id: string; name: string; baseUrl: string };
@@ -405,15 +406,9 @@ export default function DashboardPage() {
               <textarea name="metaDescription" rows={2} defaultValue={edit.metaDescription ?? ""} />
             </label>
             <label>
-              Article body
-              <span className="field-hint">Edit like a document — tags are hidden.</span>
-              <div
-                className="rich-editor"
-                contentEditable
-                suppressContentEditableWarning
-                dangerouslySetInnerHTML={{ __html: readableHtml(edit.bodyHtml) }}
-                onInput={(e) => setEditBodyHtml((e.target as HTMLDivElement).innerHTML)}
-              />
+              Article
+              <span className="field-hint">Google Docs–style edit — formatting toolbar, no raw HTML.</span>
+              <DocEditor html={readableHtml(edit.bodyHtml)} onChange={setEditBodyHtml} />
               <input type="hidden" name="bodyHtml" value={editBodyHtml} readOnly />
             </label>
             <button type="submit" disabled={busyId === edit.id}>
