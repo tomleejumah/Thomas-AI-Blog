@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { encryptSecret } from "../lib/secrets";
 
 const createSiteSchema = z.object({
   name: z.string().min(1),
@@ -33,7 +34,7 @@ export const siteRoutes: FastifyPluginAsync = async (app) => {
         name: body.name,
         baseUrl: body.baseUrl.replace(/\/$/, ""),
         wpUsername: body.wpUsername,
-        wpAppPassword: body.wpAppPassword,
+        wpAppPassword: encryptSecret(body.wpAppPassword),
         rankMathActive: body.rankMathActive ?? true,
       },
     });

@@ -1,6 +1,7 @@
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { siteWpAuth } from "../lib/siteAuth";
 import {
   createWpDraftPost,
   listWpCategories,
@@ -30,10 +31,11 @@ export const wordpressRoutes: FastifyPluginAsync = async (app) => {
     const site = await prisma.site.findUnique({ where: { id: siteId } });
     if (!site) return reply.code(404).send({ error: "Site not found" });
 
+    const auth = await siteWpAuth(site);
     const categories = await listWpCategories(
-      site.baseUrl,
-      site.wpUsername,
-      site.wpAppPassword
+      auth.baseUrl,
+      auth.username,
+      auth.appPassword
     );
 
     for (const cat of categories) {
@@ -52,7 +54,6 @@ export const wordpressRoutes: FastifyPluginAsync = async (app) => {
       });
     }
 
-    // Wire parent relations after all categories exist
     const local = await prisma.category.findMany({ where: { siteId: site.id } });
     const byWpId = new Map(local.map((c) => [c.wpCategoryId, c]));
 
@@ -89,10 +90,11 @@ export const wordpressRoutes: FastifyPluginAsync = async (app) => {
     const site = await prisma.site.findUnique({ where: { id: siteId } });
     if (!site) return reply.code(404).send({ error: "Site not found" });
 
+    const auth = await siteWpAuth(site);
     const post = await createWpDraftPost(
-      site.baseUrl,
-      site.wpUsername,
-      site.wpAppPassword,
+      auth.baseUrl,
+      auth.username,
+      auth.appPassword,
       {
         title: body.title,
         content: body.content,

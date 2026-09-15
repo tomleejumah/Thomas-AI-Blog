@@ -5,6 +5,7 @@ import {
   generateFeaturedImageBytes,
   generateForContent,
 } from "../services/generate";
+import { siteWpAuth } from "../lib/siteAuth";
 import { createWpDraftPost, uploadWpMedia } from "../services/wordpress";
 
 export const contentRoutes: FastifyPluginAsync = async (app) => {
@@ -181,6 +182,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       let featuredMediaId: number | undefined;
       let media: { id: number; source_url?: string } | undefined;
       let imageError: string | undefined;
+      const auth = await siteWpAuth(content.site);
 
       if (body.withImage !== false) {
         const prompt =
@@ -190,9 +192,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
           const img = await generateFeaturedImageBytes(prompt);
           if (img) {
             media = await uploadWpMedia(
-              content.site.baseUrl,
-              content.site.wpUsername,
-              content.site.wpAppPassword,
+              auth.baseUrl,
+              auth.username,
+              auth.appPassword,
               {
                 bytes: img.bytes,
                 filename: `${content.slug || "featured"}-${Date.now()}.png`,
@@ -217,9 +219,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       }
 
       const post = (await createWpDraftPost(
-        content.site.baseUrl,
-        content.site.wpUsername,
-        content.site.wpAppPassword,
+        auth.baseUrl,
+        auth.username,
+        auth.appPassword,
         {
           title: content.seoTitle || content.title,
           content: html,
