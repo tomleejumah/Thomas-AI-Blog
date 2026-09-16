@@ -662,10 +662,60 @@ textarea {
 
 .more-wrap {
   position: relative;
+  flex-shrink: 0;
 }
 
 .more-mobile-only {
   display: none;
+}
+
+.more-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 50;
+  min-width: 220px;
+  padding: 0.35rem;
+  display: grid;
+  gap: 0.1rem;
+  background: #1a222c;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+}
+
+.more-menu button,
+.more-menu a {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.more-menu button:hover,
+.more-menu a:hover,
+.more-menu button:focus-visible,
+.more-menu a:focus-visible {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.more-menu button.danger {
+  color: #ff7b7b;
+  background: transparent;
+  border: 0;
+}
+
+.more-menu button.danger:hover {
+  background: rgba(255, 123, 123, 0.1);
 }
 
 @media (max-width: 800px) {
@@ -872,30 +922,35 @@ textarea {
     flex-shrink: 0;
     width: auto;
     display: flex;
+    flex-wrap: nowrap;
+    align-items: flex-start;
     gap: 0.2rem;
     padding-top: 0;
   }
 
   .actions-quick {
-    display: none;
+    display: none !important;
   }
 
   .more-mobile-only {
-    display: block;
+    display: block !important;
   }
 
   .icon-more {
-    width: 38px;
-    height: 38px;
-    font-size: 1.35rem;
-    border-color: transparent;
-    background: transparent;
+    width: 40px;
+    height: 40px;
+    font-size: 1.4rem;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.02);
   }
 
   .more-menu {
+    position: absolute;
     right: 0;
     left: auto;
-    min-width: 200px;
+    top: calc(100% + 6px);
+    min-width: 210px;
+    display: grid;
   }
 
   .maint-top {
