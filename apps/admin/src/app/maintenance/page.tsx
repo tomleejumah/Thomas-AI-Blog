@@ -136,9 +136,7 @@ export default function MaintenancePage() {
       </div>
 
       <h2 className="subhead">Update keys</h2>
-      <p className="muted">
-        API never sends full keys to the browser — only <code>••••last4</code>. Yellow fill is your browser autofill, not a fetch. Stored in server <code>.env</code> only.
-      </p>
+      <p className="muted">Leave blank to keep the current key. Saved to the API server only.</p>
       <form className="form surface" onSubmit={onSaveKey} autoComplete="off">
         <label>
           Key to update
