@@ -264,6 +264,13 @@ textarea {
   accent-color: var(--accent, #5b8def);
 }
 
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+}
+
 .meta,
 .muted {
   color: var(--muted);

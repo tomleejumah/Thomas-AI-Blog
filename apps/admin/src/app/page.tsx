@@ -273,14 +273,31 @@ export default function DashboardPage() {
             />
             Select all
           </label>
-          <button
-            type="button"
-            className="danger"
-            disabled={selected.size === 0 || bulkBusy}
-            onClick={() => runBulkDelete()}
-          >
-            {bulkBusy ? "Deleting…" : `Delete selected (${selected.size})`}
-          </button>
+          {selected.size > 0 ? (
+            <button
+              type="button"
+              className="danger icon-btn"
+              disabled={bulkBusy}
+              onClick={() => runBulkDelete()}
+              title={`Delete ${selected.size} selected`}
+              aria-label={`Delete ${selected.size} selected`}
+            >
+              {bulkBusy ? (
+                <span className="spinner sm" />
+              ) : (
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path
+                    d="M3 6h18M8 6V4h8v2m1 0v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V6h10z"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
+              <span>{selected.size}</span>
+            </button>
+          ) : null}
         </div>
       ) : null}
 
