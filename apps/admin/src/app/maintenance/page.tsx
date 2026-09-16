@@ -140,18 +140,19 @@ export default function MaintenancePage() {
             ["Tavily", status?.providers.tavily, "tavily"],
           ] as const
         ).map(([name, probe, key]) => (
-          <div key={name} className="status-row">
-            <strong>{name}</strong>
-            <span className={`pill pill-${probe?.status ?? "missing"}`}>
-              {statusLabel(probe?.status ?? "missing")}
-            </span>
-            <span className="meta">{probe?.detail}</span>
-            <span className="meta">
-              key{" "}
+          <div key={name} className="status-card">
+            <div className="status-card-head">
+              <strong>{name}</strong>
+              <span className={`pill pill-${probe?.status ?? "missing"}`}>
+                {statusLabel(probe?.status ?? "missing")}
+              </span>
+            </div>
+            <p className="meta status-detail">{probe?.detail ?? "—"}</p>
+            <p className="meta status-key">
               {status?.keys[key]?.configured
-                ? `••••${status.keys[key].last4}`
-                : "—"}
-            </span>
+                ? `Key ····${status.keys[key].last4}`
+                : "Key not set"}
+            </p>
           </div>
         ))}
       </div>
