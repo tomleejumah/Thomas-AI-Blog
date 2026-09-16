@@ -6,7 +6,7 @@ import {
   generateForContent,
 } from "../services/generate";
 import { siteWpAuth } from "../lib/siteAuth";
-import { createWpDraftPost, uploadWpMedia } from "../services/wordpress";
+import { createWpDraftPost, deleteWpPost, uploadWpMedia } from "../services/wordpress";
 
 export const contentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/", async (req) => {
@@ -92,10 +92,46 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
 
   app.delete("/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const existing = await prisma.contentItem.findUnique({ where: { id } });
+    const q = z
+      .object({
+        deleteWp: z
+          .union([z.boolean(), z.enum(["true", "false", "1", "0"])])
+          .optional()
+          .transform((v) => v === true || v === "true" || v === "1"),
+      })
+      .parse(req.query ?? {});
+    const body = z
+      .object({ deleteWp: z.boolean().optional() })
+      .safeParse(req.body ?? {});
+    const deleteWp = q.deleteWp || Boolean(body.success && body.data.deleteWp);
+
+    const existing = await prisma.contentItem.findUnique({
+      where: { id },
+      include: { site: true },
+    });
     if (!existing) return reply.code(404).send({ error: "Not found" });
+
+    let wpDeleted = false;
+    if (deleteWp && existing.wpPostId) {
+      try {
+        const auth = await siteWpAuth(existing.site);
+        await deleteWpPost(auth.baseUrl, auth.username, auth.appPassword, existing.wpPostId);
+        wpDeleted = true;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "WordPress delete failed";
+        return reply.code(400).send({ error: message });
+      }
+    }
+
+    const hadWp = Boolean(existing.wpPostId || existing.wpUrl);
+    const wpUrl = existing.wpUrl;
     await prisma.contentItem.delete({ where: { id } });
-    return { ok: true };
+    return {
+      ok: true,
+      wpDeleted,
+      hadWp,
+      wpUrl: hadWp && !wpDeleted ? wpUrl : null,
+    };
   });
 
   app.post("/:id/generate", async (req, reply) => {

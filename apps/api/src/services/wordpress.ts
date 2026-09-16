@@ -118,3 +118,15 @@ export async function createWpDraftPost(
     }),
   });
 }
+
+/** Move a WP post to Trash (not permanent). */
+export async function deleteWpPost(
+  baseUrl: string,
+  username: string,
+  appPassword: string,
+  postId: number
+) {
+  return wpFetch(baseUrl, username, appPassword, `/wp/v2/posts/${postId}`, {
+    method: "DELETE",
+  });
+}
