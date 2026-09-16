@@ -219,7 +219,7 @@ export default function DashboardPage() {
       await finishJob();
       setMsg(
         res.content.wpUrl
-          ? `Draft on WP: ${res.content.wpUrl}${res.imageError ? " (no featured image)" : ""}`
+          ? `Published to WordPress${res.imageError ? " (no featured image)" : ""}. Open View on the card anytime.`
           : "Published draft"
       );
       await load();
@@ -398,18 +398,6 @@ export default function DashboardPage() {
       {msg ? <p className="msg ok">{msg}</p> : null}
       {error ? <p className="msg err">{error}</p> : null}
 
-      {job ? (
-        <div className="job-progress" role="status" aria-live="polite">
-          <div className="job-progress-top">
-            <span>{job.label}</span>
-            <strong>{Math.round(job.pct)}%</strong>
-          </div>
-          <div className="job-progress-track">
-            <div className="job-progress-fill" style={{ width: `${job.pct}%` }} />
-          </div>
-        </div>
-      ) : null}
-
       <div className="filter-bar" role="tablist" aria-label="Filter content">
         {FILTERS.map((f) => (
           <button
@@ -505,34 +493,42 @@ export default function DashboardPage() {
                     </span>
                     {" · "}
                     {c.language}
-                    {c.wpUrl ? (
-                      <>
-                        {" "}
-                        ·{" "}
-                        <a href={c.wpUrl} target="_blank" rel="noreferrer">
-                          WP draft
-                        </a>
-                      </>
-                    ) : null}
                   </div>
+                  {c.wpUrl ? (
+                    <div className="row-link">
+                      <a href={c.wpUrl} target="_blank" rel="noreferrer">
+                        {c.wpUrl}
+                      </a>
+                    </div>
+                  ) : null}
                   {rowJob ? (
-                    <div className="row-progress">
-                      <div className="job-progress-track sm">
+                    <div className="job-progress row-progress" role="status">
+                      <div className="job-progress-top">
+                        <span>{rowJob.label}</span>
+                        <strong>{Math.round(rowJob.pct)}%</strong>
+                      </div>
+                      <div className="job-progress-track">
                         <div className="job-progress-fill" style={{ width: `${rowJob.pct}%` }} />
                       </div>
-                      <span className="meta">
-                        {rowJob.label} {Math.round(rowJob.pct)}%
-                      </span>
                     </div>
                   ) : null}
                 </div>
                 <div className="actions">
                   {busy && !rowJob ? <span className="spinner sm" /> : null}
-                  {!c.wpUrl ? (
+                  {c.wpUrl ? (
+                    <a
+                      className="btn-link"
+                      href={c.wpUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      View
+                    </a>
+                  ) : (
                     <button type="button" disabled={busy || bulkBusy} onClick={() => runGenerate(c.id)}>
                       {c.bodyHtml ? "Regenerate" : "Generate"}
                     </button>
-                  ) : null}
+                  )}
                   {c.bodyHtml ? (
                     <button
                       type="button"

@@ -363,13 +363,38 @@ textarea {
 }
 
 .row-progress {
-  margin-top: 0.35rem;
-  display: grid;
-  gap: 0.25rem;
+  margin-top: 0.55rem;
 }
 
 .row-busy {
   opacity: 0.92;
+}
+
+.row-link {
+  margin-top: 0.35rem;
+  font-size: 0.85rem;
+}
+
+.row-link a {
+  color: #5b8def;
+  word-break: break-all;
+}
+
+.btn-link {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.4rem 0.65rem;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  color: var(--text);
+  text-decoration: none;
+  background: transparent;
+}
+
+.btn-link:hover {
+  border-color: #5b8def;
+  color: #5b8def;
 }
 
 .meta,
