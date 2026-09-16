@@ -123,7 +123,7 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
                   return { status: "invalid" as const, detail: `HTTP ${res.status}` };
                 }
                 if (!res.ok) return { status: "down" as const, detail: `HTTP ${res.status}` };
-                return { status: "up" as const, detail: "Search OK — used on Generate" };
+                return { status: "up" as const, detail: "OK" };
               } catch (err) {
                 return {
                   status: "down" as const,
