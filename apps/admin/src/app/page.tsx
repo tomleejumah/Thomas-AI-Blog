@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import DocEditor from "@/components/DocEditor";
 import { api } from "@/lib/api";
 
@@ -15,9 +15,41 @@ type Content = {
   seoTitle?: string | null;
   metaDescription?: string | null;
   focusKeyword?: string | null;
+  wpPostId?: number | null;
   wpUrl?: string | null;
   site?: { id: string; name: string };
 };
+
+type Filter = "all" | "idea" | "generated" | "review" | "published";
+type JobKind = "generate" | "publish";
+type JobProgress = { id: string; kind: JobKind; pct: number; label: string };
+
+const FILTERS: { id: Filter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "idea", label: "Ideas" },
+  { id: "generated", label: "Generated" },
+  { id: "review", label: "Review" },
+  { id: "published", label: "On WP" },
+];
+
+function matchesFilter(c: Content, f: Filter) {
+  if (f === "all") return true;
+  if (f === "published") return !!c.wpUrl || c.status === "PUBLISHED" || c.status === "UPDATED";
+  if (f === "review") return c.status === "HUMAN_REVIEW" || c.status === "APPROVED";
+  if (f === "generated")
+    return !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED" && c.status !== "UPDATED";
+  if (f === "idea") return !c.bodyHtml && !c.wpUrl;
+  return true;
+}
+
+function statusClass(status: string) {
+  const s = status.toLowerCase();
+  if (s === "published" || s === "updated") return "st-published";
+  if (s === "human_review" || s === "approved") return "st-review";
+  if (s === "ai_generated" || s === "draft") return "st-generated";
+  if (s === "idea" || s === "research") return "st-idea";
+  return "st-muted";
+}
 
 /** If model stored escaped tags (&lt;p&gt;), turn into real HTML for display/edit */
 function readableHtml(raw: string | null | undefined) {
@@ -46,6 +78,13 @@ export default function DashboardPage() {
   const [editBodyHtml, setEditBodyHtml] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [filter, setFilter] = useState<Filter>("all");
+  const [job, setJob] = useState<JobProgress | null>(null);
+
+  const filtered = useMemo(
+    () => contents.filter((c) => matchesFilter(c, filter)),
+    [contents, filter]
+  );
 
   const load = useCallback(async () => {
     const [cJson, sJson] = await Promise.all([
@@ -59,6 +98,33 @@ export default function DashboardPage() {
   useEffect(() => {
     load().catch((err) => setError(err instanceof Error ? err.message : "Failed"));
   }, [load]);
+
+  useEffect(() => {
+    if (!job) return;
+    const t = setInterval(() => {
+      setJob((prev) => {
+        if (!prev || prev.pct >= 92) return prev;
+        const step = prev.kind === "generate" ? 2.5 + Math.random() * 3.5 : 3 + Math.random() * 4;
+        return { ...prev, pct: Math.min(92, prev.pct + step) };
+      });
+    }, 450);
+    return () => clearInterval(t);
+  }, [job?.id, job?.kind]);
+
+  function startJob(id: string, kind: JobKind) {
+    setJob({
+      id,
+      kind,
+      pct: 5,
+      label: kind === "generate" ? "Generating…" : "Deploying to WordPress…",
+    });
+  }
+
+  async function finishJob() {
+    setJob((prev) => (prev ? { ...prev, pct: 100, label: "Done" } : null));
+    await new Promise((r) => setTimeout(r, 350));
+    setJob(null);
+  }
 
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -84,10 +150,12 @@ export default function DashboardPage() {
       });
       if (payload.autoGenerate) {
         setBusyId(content.id);
+        startJob(content.id, "generate");
         await api(`/content/${content.id}/generate`, {
           method: "POST",
           body: JSON.stringify({ provider: "auto", brief: payload.brief }),
         });
+        await finishJob();
         setMsg(`Generated: ${content.title}`);
       } else {
         setMsg(`Idea saved: ${content.title}`);
@@ -95,6 +163,7 @@ export default function DashboardPage() {
       setShowCreate(false);
       await load();
     } catch (err) {
+      setJob(null);
       setError(err instanceof Error ? err.message : "Create failed");
     } finally {
       setBusyId(null);
@@ -107,14 +176,17 @@ export default function DashboardPage() {
     setBusyId(id);
     setError("");
     setMsg("");
+    startJob(id, "generate");
     try {
       const res = await api<{ provider: string }>(`/content/${id}/generate`, {
         method: "POST",
         body: JSON.stringify({ provider: "auto" }),
       });
+      await finishJob();
       setMsg(`Generated via ${res.provider}`);
       await load();
     } catch (err) {
+      setJob(null);
       setError(err instanceof Error ? err.message : "Generate failed");
     } finally {
       setBusyId(null);
@@ -133,8 +205,10 @@ export default function DashboardPage() {
     setBusyId(id);
     setError("");
     setMsg("");
+    startJob(id, "publish");
     try {
       await api(`/content/${id}/approve`, { method: "POST", body: "{}" });
+      setJob((p) => (p ? { ...p, pct: Math.max(p.pct, 35), label: "Publishing draft…" } : p));
       const res = await api<{ content: Content; imageError?: string }>(
         `/content/${id}/publish`,
         {
@@ -142,6 +216,7 @@ export default function DashboardPage() {
           body: JSON.stringify({ withImage: true, status: "draft" }),
         }
       );
+      await finishJob();
       setMsg(
         res.content.wpUrl
           ? `Draft on WP: ${res.content.wpUrl}${res.imageError ? " (no featured image)" : ""}`
@@ -149,6 +224,7 @@ export default function DashboardPage() {
       );
       await load();
     } catch (err) {
+      setJob(null);
       setError(err instanceof Error ? err.message : "Publish failed");
     } finally {
       setBusyId(null);
@@ -157,16 +233,44 @@ export default function DashboardPage() {
 
   async function runDelete(id: string) {
     setMenuId(null);
-    if (!confirm("Delete this item from the dashboard?")) return;
+    const item = contents.find((c) => c.id === id);
+    const linked = Boolean(item?.wpPostId || item?.wpUrl);
+    let deleteWp = false;
+    if (linked) {
+      const go = confirm(
+        "Delete from dashboard?\n\nOK = continue\nCancel = keep it"
+      );
+      if (!go) return;
+      deleteWp = confirm(
+        "Also move the WordPress draft to Trash?\n\nOK = trash in WP + delete here\nCancel = dashboard only (WP draft stays — delete it in WP Admin → Posts if needed)"
+      );
+    } else if (!confirm("Delete this item from the dashboard?")) {
+      return;
+    }
     setBusyId(id);
     try {
-      await api(`/content/${id}`, { method: "DELETE" });
+      const res = await api<{
+        ok: boolean;
+        wpDeleted?: boolean;
+        hadWp?: boolean;
+        wpUrl?: string | null;
+      }>(`/content/${id}?deleteWp=${deleteWp ? "true" : "false"}`, {
+        method: "DELETE",
+      });
       setSelected((prev) => {
         const next = new Set(prev);
         next.delete(id);
         return next;
       });
-      setMsg("Deleted");
+      if (res.wpDeleted) {
+        setMsg("Deleted from dashboard and moved WP draft to Trash.");
+      } else if (linked && !deleteWp) {
+        setMsg(
+          "Deleted from dashboard only. To remove the WP draft, open WordPress Admin → Posts (or Trash) and delete it there."
+        );
+      } else {
+        setMsg("Deleted");
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
@@ -186,25 +290,56 @@ export default function DashboardPage() {
 
   function toggleSelectAll() {
     setSelected((prev) =>
-      prev.size === contents.length ? new Set() : new Set(contents.map((c) => c.id))
+      prev.size === filtered.length && filtered.every((c) => prev.has(c.id))
+        ? new Set()
+        : new Set(filtered.map((c) => c.id))
     );
   }
 
   async function runBulkDelete() {
     const ids = [...selected];
     if (ids.length === 0) return;
-    if (!confirm(`Delete ${ids.length} selected item(s) from the dashboard?`)) return;
+    const linked = contents.filter((c) => ids.includes(c.id) && (c.wpPostId || c.wpUrl));
+    let deleteWp = false;
+    if (linked.length > 0) {
+      if (
+        !confirm(
+          `Delete ${ids.length} selected item(s) from the dashboard?\n\n${linked.length} have a WordPress draft linked.`
+        )
+      ) {
+        return;
+      }
+      deleteWp = confirm(
+        `Also move ${linked.length} linked WordPress draft(s) to Trash?\n\nOK = trash in WP + delete here\nCancel = dashboard only (WP drafts stay)`
+      );
+    } else if (!confirm(`Delete ${ids.length} selected item(s) from the dashboard?`)) {
+      return;
+    }
     setBulkBusy(true);
     setError("");
     setMsg("");
     try {
       const results = await Promise.allSettled(
-        ids.map((id) => api(`/content/${id}`, { method: "DELETE" }))
+        ids.map((id) =>
+          api(`/content/${id}?deleteWp=${deleteWp ? "true" : "false"}`, {
+            method: "DELETE",
+          })
+        )
       );
       const failed = results.filter((r) => r.status === "rejected").length;
       const ok = ids.length - failed;
       setSelected(new Set());
-      setMsg(failed ? `Deleted ${ok}, failed ${failed}` : `Deleted ${ok}`);
+      if (failed) {
+        setMsg(`Deleted ${ok}, failed ${failed}`);
+      } else if (linked.length > 0 && !deleteWp) {
+        setMsg(
+          `Deleted ${ok} from dashboard only. To remove WP drafts, open WordPress Admin → Posts and trash them there.`
+        );
+      } else if (linked.length > 0 && deleteWp) {
+        setMsg(`Deleted ${ok} (WP drafts moved to Trash where linked).`);
+      } else {
+        setMsg(`Deleted ${ok}`);
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Bulk delete failed");
@@ -245,6 +380,9 @@ export default function DashboardPage() {
     setEditBodyHtml(readableHtml(c.bodyHtml));
   }
 
+  const allFilteredSelected =
+    filtered.length > 0 && filtered.every((c) => selected.has(c.id));
+
   return (
     <>
       <div className="dash-head">
@@ -260,14 +398,51 @@ export default function DashboardPage() {
       {msg ? <p className="msg ok">{msg}</p> : null}
       {error ? <p className="msg err">{error}</p> : null}
 
-      {contents.length > 0 ? (
+      {job ? (
+        <div className="job-progress" role="status" aria-live="polite">
+          <div className="job-progress-top">
+            <span>{job.label}</span>
+            <strong>{Math.round(job.pct)}%</strong>
+          </div>
+          <div className="job-progress-track">
+            <div className="job-progress-fill" style={{ width: `${job.pct}%` }} />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="filter-bar" role="tablist" aria-label="Filter content">
+        {FILTERS.map((f) => (
+          <button
+            key={f.id}
+            type="button"
+            role="tab"
+            aria-selected={filter === f.id}
+            className={`filter-chip${filter === f.id ? " active" : ""}`}
+            onClick={() => {
+              setFilter(f.id);
+              setSelected(new Set());
+            }}
+          >
+            {f.label}
+            <span className="filter-count">
+              {contents.filter((c) => matchesFilter(c, f.id)).length}
+            </span>
+          </button>
+        ))}
+      </div>
+
+      {filtered.length > 0 ? (
         <div className="bulk-bar">
           <label className="bulk-check">
             <input
               type="checkbox"
-              checked={selected.size > 0 && selected.size === contents.length}
+              checked={allFilteredSelected}
               ref={(el) => {
-                if (el) el.indeterminate = selected.size > 0 && selected.size < contents.length;
+                if (el)
+                  el.indeterminate =
+                    selected.size > 0 &&
+                    !allFilteredSelected &&
+                    filtered.some((c) => selected.has(c.id));
               }}
               onChange={toggleSelectAll}
             />
@@ -304,13 +479,15 @@ export default function DashboardPage() {
       <div className="list">
         {contents.length === 0 ? (
           <p className="muted">Nothing yet. Hit + to add a topic.</p>
+        ) : filtered.length === 0 ? (
+          <p className="muted">No items in this filter.</p>
         ) : (
-          contents.map((c) => {
+          filtered.map((c) => {
             const busy = busyId === c.id;
-            const canPublish =
-              !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED";
+            const canPublish = !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED";
+            const rowJob = job?.id === c.id ? job : null;
             return (
-              <div key={c.id} className="row">
+              <div key={c.id} className={`row${busy ? " row-busy" : ""}`}>
                 <label className="row-check">
                   <input
                     type="checkbox"
@@ -322,7 +499,12 @@ export default function DashboardPage() {
                 <div className="row-main">
                   <strong>{c.title}</strong>
                   <div className="meta">
-                    {c.site?.name ?? c.siteId} · {c.status} · {c.language}
+                    {c.site?.name ?? c.siteId} ·{" "}
+                    <span className={`st ${statusClass(c.status)}`}>
+                      {c.status.replace(/_/g, " ")}
+                    </span>
+                    {" · "}
+                    {c.language}
                     {c.wpUrl ? (
                       <>
                         {" "}
@@ -333,9 +515,19 @@ export default function DashboardPage() {
                       </>
                     ) : null}
                   </div>
+                  {rowJob ? (
+                    <div className="row-progress">
+                      <div className="job-progress-track sm">
+                        <div className="job-progress-fill" style={{ width: `${rowJob.pct}%` }} />
+                      </div>
+                      <span className="meta">
+                        {rowJob.label} {Math.round(rowJob.pct)}%
+                      </span>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="actions">
-                  {busy ? <span className="spinner sm" /> : null}
+                  {busy && !rowJob ? <span className="spinner sm" /> : null}
                   {!c.wpUrl ? (
                     <button type="button" disabled={busy || bulkBusy} onClick={() => runGenerate(c.id)}>
                       {c.bodyHtml ? "Regenerate" : "Generate"}
