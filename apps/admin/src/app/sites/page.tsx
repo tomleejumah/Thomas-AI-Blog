@@ -166,9 +166,6 @@ export default function SitesPage() {
                 ×
               </button>
             </div>
-            <p className="muted">
-              We test REST, save credentials (encrypted), then scan categories.
-            </p>
             <label>
               Site name
               <input name="name" required placeholder="LisbonYacht" />

@@ -67,12 +67,7 @@ export default function MaintenancePage() {
     setMsg("");
     const fd = new FormData(e.currentTarget);
     const body: Record<string, string> = {};
-    for (const k of [
-      "OPENAI_API_KEY",
-      "GEMINI_API_KEY",
-      "TAVILY_API_KEY",
-      "PERPLEXITY_API_KEY",
-    ]) {
+    for (const k of ["OPENAI_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY"]) {
       const v = String(fd.get(k) ?? "").trim();
       if (v) body[k] = v;
     }
@@ -93,9 +88,7 @@ export default function MaintenancePage() {
   return (
     <>
       <h1>Maintenance</h1>
-      <p className="lead">
-        Provider status (so outages/credits show as theirs) and secure key updates written only to the API server.
-      </p>
+      <p className="lead">LLM / research API status and server-side key updates.</p>
 
       <div className="maint-top">
         <div className="pulse-block">
@@ -114,12 +107,11 @@ export default function MaintenancePage() {
       <div className="status-grid">
         {(
           [
-            ["OpenAI", status?.providers.openai],
-            ["Gemini", status?.providers.gemini],
-            ["Tavily", status?.providers.tavily],
-            ["Perplexity", status?.providers.perplexity],
+            ["OpenAI", status?.providers.openai, "openai"],
+            ["Gemini", status?.providers.gemini, "gemini"],
+            ["Tavily", status?.providers.tavily, "tavily"],
           ] as const
-        ).map(([name, probe]) => (
+        ).map(([name, probe, key]) => (
           <div key={name} className="status-row">
             <strong>{name}</strong>
             <span className={`pill pill-${probe?.status ?? "missing"}`}>
@@ -128,21 +120,9 @@ export default function MaintenancePage() {
             <span className="meta">{probe?.detail}</span>
             <span className="meta">
               key{" "}
-              {name === "OpenAI"
-                ? status?.keys.openai?.configured
-                  ? `••••${status.keys.openai.last4}`
-                  : "—"
-                : name === "Gemini"
-                  ? status?.keys.gemini?.configured
-                    ? `••••${status.keys.gemini.last4}`
-                    : "—"
-                  : name === "Tavily"
-                    ? status?.keys.tavily?.configured
-                      ? `••••${status.keys.tavily.last4}`
-                      : "—"
-                    : status?.keys.perplexity?.configured
-                      ? `••••${status.keys.perplexity.last4}`
-                      : "—"}
+              {status?.keys[key]?.configured
+                ? `••••${status.keys[key].last4}`
+                : "—"}
             </span>
           </div>
         ))}
@@ -162,12 +142,8 @@ export default function MaintenancePage() {
           <input name="GEMINI_API_KEY" type="password" placeholder="AIza… (leave blank to keep)" autoComplete="off" />
         </label>
         <label>
-          Tavily (optional research)
+          Tavily research key
           <input name="TAVILY_API_KEY" type="password" placeholder="tvly-…" autoComplete="off" />
-        </label>
-        <label>
-          Perplexity (optional research)
-          <input name="PERPLEXITY_API_KEY" type="password" placeholder="pplx-…" autoComplete="off" />
         </label>
         <button type="submit" disabled={busy}>
           {busy ? "Saving…" : "Save to server"}
