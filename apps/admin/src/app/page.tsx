@@ -76,6 +76,8 @@ export default function DashboardPage() {
   const [createCategories, setCreateCategories] = useState<
     Array<{ id: string; name: string }>
   >([]);
+  const [categoryMode, setCategoryMode] = useState<"existing" | "custom">("existing");
+  const [customCategory, setCustomCategory] = useState("");
   const [preview, setPreview] = useState<Content | null>(null);
   const [edit, setEdit] = useState<Content | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -157,7 +159,12 @@ export default function DashboardPage() {
     const fd = new FormData(e.currentTarget);
     const payload = {
       siteId: String(fd.get("siteId") ?? ""),
-      categoryId: String(fd.get("categoryId") ?? "") || undefined,
+      categoryId:
+        categoryMode === "existing"
+          ? String(fd.get("categoryId") ?? "") || undefined
+          : undefined,
+      customCategory:
+        categoryMode === "custom" ? customCategory.trim() || undefined : undefined,
       title: String(fd.get("title") ?? ""),
       language: String(fd.get("language") ?? "en"),
       brief: String(fd.get("brief") ?? "") || undefined,
@@ -169,6 +176,7 @@ export default function DashboardPage() {
         body: JSON.stringify({
           siteId: payload.siteId,
           categoryId: payload.categoryId,
+          customCategory: payload.customCategory,
           title: payload.title,
           language: payload.language,
         }),
@@ -663,15 +671,42 @@ export default function DashboardPage() {
             </label>
             <label>
               Category
-              <select name="categoryId" defaultValue="">
-                <option value="">None (optional)</option>
-                {createCategories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
+              <select
+                value={categoryMode === "custom" ? "__custom__" : "existing"}
+                onChange={(e) => {
+                  const custom = e.target.value === "__custom__";
+                  setCategoryMode(custom ? "custom" : "existing");
+                  if (!custom) setCustomCategory("");
+                }}
+              >
+                <option value="existing">Pick from site (or none)</option>
+                <option value="__custom__">Write a new category…</option>
               </select>
             </label>
+            {categoryMode === "custom" ? (
+              <label>
+                New category name
+                <input
+                  value={customCategory}
+                  onChange={(e) => setCustomCategory(e.target.value)}
+                  required
+                  placeholder="e.g. Sunset Charters"
+                  autoComplete="off"
+                />
+              </label>
+            ) : (
+              <label>
+                Existing category
+                <select name="categoryId" defaultValue="">
+                  <option value="">None (optional)</option>
+                  {createCategories.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label>
               Title / topic
               <input name="title" required placeholder="Sunset yacht charter tips" />

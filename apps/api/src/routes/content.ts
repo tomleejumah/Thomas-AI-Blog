@@ -6,7 +6,12 @@ import {
   generateForContent,
 } from "../services/generate";
 import { siteWpAuth } from "../lib/siteAuth";
-import { createWpDraftPost, deleteWpPost, uploadWpMedia } from "../services/wordpress";
+import {
+  createWpCategory,
+  createWpDraftPost,
+  deleteWpPost,
+  uploadWpMedia,
+} from "../services/wordpress";
 
 export const contentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/", async (req) => {
@@ -42,15 +47,68 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       .object({
         siteId: z.string().min(1),
         categoryId: z.string().optional(),
+        customCategory: z.string().min(1).optional(),
         title: z.string().min(1),
         language: z.enum(["en", "pt", "fr"]).optional(),
       })
       .parse(req.body);
 
+    const site = await prisma.site.findUnique({ where: { id: body.siteId } });
+    if (!site) return reply.code(404).send({ error: "Site not found" });
+
+    let categoryId = body.categoryId || undefined;
+
+    if (body.customCategory?.trim()) {
+      const name = body.customCategory.trim();
+      const slug =
+        name
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, "")
+          .slice(0, 80) || `cat-${Date.now()}`;
+
+      const existing = await prisma.category.findUnique({
+        where: { siteId_slug: { siteId: site.id, slug } },
+      });
+      if (existing) {
+        categoryId = existing.id;
+      } else {
+        try {
+          const auth = await siteWpAuth(site);
+          const wpCat = await createWpCategory(
+            auth.baseUrl,
+            auth.username,
+            auth.appPassword,
+            name
+          );
+          const created = await prisma.category.create({
+            data: {
+              siteId: site.id,
+              name: wpCat.name || name,
+              slug: wpCat.slug || slug,
+              wpCategoryId: wpCat.id,
+            },
+          });
+          categoryId = created.id;
+        } catch (err) {
+          // still save locally if WP create fails
+          const created = await prisma.category.create({
+            data: {
+              siteId: site.id,
+              name,
+              slug,
+            },
+          });
+          categoryId = created.id;
+          void err;
+        }
+      }
+    }
+
     const content = await prisma.contentItem.create({
       data: {
         siteId: body.siteId,
-        categoryId: body.categoryId,
+        categoryId,
         title: body.title,
         language: body.language ?? "en",
         status: "IDEA",

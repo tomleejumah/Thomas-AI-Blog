@@ -58,6 +58,25 @@ export async function listWpCategories(
   ) as Promise<Array<{ id: number; name: string; slug: string; parent: number }>>;
 }
 
+export async function createWpCategory(
+  baseUrl: string,
+  username: string,
+  appPassword: string,
+  name: string
+) {
+  const slug = name
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 80) || `cat-${Date.now()}`;
+
+  return wpFetch(baseUrl, username, appPassword, "/wp/v2/categories", {
+    method: "POST",
+    body: JSON.stringify({ name: name.trim(), slug }),
+  }) as Promise<{ id: number; name: string; slug: string }>;
+}
+
 export async function uploadWpMedia(
   baseUrl: string,
   username: string,
