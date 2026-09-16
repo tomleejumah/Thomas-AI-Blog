@@ -173,9 +173,14 @@ export default function MaintenancePage() {
               </div>
               <div className="meta">
                 {p?.calls ?? 0} calls
-                {name !== "tavily"
-                  ? ` · in ${p?.inputTokens ?? 0} · out ${p?.outputTokens ?? 0}`
-                  : ""}
+                {name !== "tavily" ? (
+                  <>
+                    {" · "}
+                    {(p?.inputTokens ?? 0).toLocaleString()} in / {(p?.outputTokens ?? 0).toLocaleString()} out tokens
+                  </>
+                ) : (
+                  " · research searches"
+                )}
               </div>
               <div className="meta">
                 {p?.lastAt
