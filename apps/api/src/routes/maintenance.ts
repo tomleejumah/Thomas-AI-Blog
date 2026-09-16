@@ -2,6 +2,8 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFi
 import path from "node:path";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
+import { prisma } from "../lib/prisma";
+import { formatUsd } from "../lib/costs";
 
 const ENV_PATH = path.resolve(__dirname, "../../../../.env");
 const AUDIT_PATH = path.resolve(__dirname, "../../../../logs/key-audit.log");
@@ -189,6 +191,57 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
         tavily: mask(process.env.TAVILY_API_KEY),
         perplexity: mask(process.env.PERPLEXITY_API_KEY),
       },
+    };
+  });
+
+  app.get("/usage", async () => {
+    const recent = await prisma.aiUsage.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 40,
+      include: {
+        content: { select: { id: true, title: true } },
+      },
+    });
+
+    const totals = await prisma.aiUsage.groupBy({
+      by: ["provider"],
+      _sum: {
+        inputTokens: true,
+        outputTokens: true,
+        estimatedUsd: true,
+      },
+      _count: true,
+    });
+
+    const estimatedUsdTotal = totals.reduce(
+      (acc, row) => acc + (row._sum.estimatedUsd ?? 0),
+      0
+    );
+
+    return {
+      estimatedUsdTotal,
+      estimatedUsdTotalLabel: formatUsd(estimatedUsdTotal),
+      note: "Estimates from logged tokens/searches — not live provider billing balances.",
+      byProvider: totals.map((row) => ({
+        provider: row.provider,
+        calls: row._count,
+        inputTokens: row._sum.inputTokens ?? 0,
+        outputTokens: row._sum.outputTokens ?? 0,
+        estimatedUsd: row._sum.estimatedUsd ?? 0,
+        estimatedUsdLabel: formatUsd(row._sum.estimatedUsd ?? 0),
+      })),
+      recent: recent.map((u) => ({
+        id: u.id,
+        provider: u.provider,
+        model: u.model,
+        operation: u.operation,
+        inputTokens: u.inputTokens,
+        outputTokens: u.outputTokens,
+        estimatedUsd: u.estimatedUsd,
+        estimatedUsdLabel: formatUsd(u.estimatedUsd),
+        createdAt: u.createdAt,
+        contentTitle: u.content?.title ?? null,
+      })),
     };
   });
 };

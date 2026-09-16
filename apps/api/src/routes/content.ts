@@ -246,6 +246,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
                 provider: img.provider,
                 model: img.model,
                 operation: "generate_image",
+                estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
               },
             });
           }

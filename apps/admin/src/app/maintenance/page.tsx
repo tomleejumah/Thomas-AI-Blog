@@ -16,6 +16,32 @@ type StatusPayload = {
   checkedAt: string;
 };
 
+type UsagePayload = {
+  estimatedUsdTotal: number;
+  estimatedUsdTotalLabel: string;
+  note: string;
+  byProvider: Array<{
+    provider: string;
+    calls: number;
+    inputTokens: number;
+    outputTokens: number;
+    estimatedUsd: number;
+    estimatedUsdLabel: string;
+  }>;
+  recent: Array<{
+    id: string;
+    provider: string;
+    model: string;
+    operation: string;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    estimatedUsd: number | null;
+    estimatedUsdLabel: string;
+    createdAt: string;
+    contentTitle: string | null;
+  }>;
+};
+
 function LivePulse({ ok }: { ok: boolean }) {
   return (
     <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden>
@@ -43,6 +69,7 @@ function statusLabel(s: string) {
 
 export default function MaintenancePage() {
   const [status, setStatus] = useState<StatusPayload | null>(null);
+  const [usage, setUsage] = useState<UsagePayload | null>(null);
   const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
@@ -53,8 +80,12 @@ export default function MaintenancePage() {
   const [keyValue, setKeyValue] = useState("");
 
   const load = useCallback(async () => {
-    const data = await api<StatusPayload>("/maintenance/status");
-    setStatus(data);
+    const [statusData, usageData] = await Promise.all([
+      api<StatusPayload>("/maintenance/status"),
+      api<UsagePayload>("/maintenance/usage"),
+    ]);
+    setStatus(statusData);
+    setUsage(usageData);
   }, []);
 
   useEffect(() => {
@@ -80,7 +111,7 @@ export default function MaintenancePage() {
         method: "PUT",
         body: JSON.stringify({ [keyTarget]: value }),
       });
-      setMsg(`${keyTarget.replace("_API_KEY", "")} updated on server. Full key is never returned.`);
+      setMsg(`${keyTarget.replace("_API_KEY", "")} updated on server.`);
       setKeyValue("");
       await load();
     } catch (err) {
@@ -95,7 +126,7 @@ export default function MaintenancePage() {
   return (
     <>
       <h1>Maintenance</h1>
-      <p className="lead">LLM / research API status and server-side key updates.</p>
+      <p className="lead">LLM / research API status, usage, and server-side key updates.</p>
 
       <div className="maint-top">
         <div className="pulse-block">
@@ -134,6 +165,49 @@ export default function MaintenancePage() {
           </div>
         ))}
       </div>
+
+      <h2 className="subhead">AI usage</h2>
+      <p className="muted">{usage?.note ?? "Logged from generate / research / image calls."}</p>
+      <div className="usage-summary">
+        <div className="usage-total">
+          <span className="meta">Estimated total</span>
+          <strong>{usage?.estimatedUsdTotalLabel ?? "—"}</strong>
+        </div>
+        <div className="usage-providers">
+          {(usage?.byProvider ?? []).map((p) => (
+            <div key={p.provider} className="usage-provider">
+              <strong>{p.provider}</strong>
+              <span className="meta">
+                {p.calls} calls · in {p.inputTokens} · out {p.outputTokens} · {p.estimatedUsdLabel}
+              </span>
+            </div>
+          ))}
+          {!usage?.byProvider?.length ? <p className="muted">No usage logged yet. Generate an article first.</p> : null}
+        </div>
+      </div>
+      {usage?.recent?.length ? (
+        <div className="list usage-list">
+          {usage.recent.map((u) => (
+            <div key={u.id} className="row">
+              <div className="row-main">
+                <strong>
+                  {u.operation} · {u.provider}
+                </strong>
+                <div className="meta">
+                  {u.contentTitle ?? "—"} · {u.model}
+                  {u.inputTokens != null || u.outputTokens != null
+                    ? ` · tokens ${u.inputTokens ?? 0}/${u.outputTokens ?? 0}`
+                    : ""}
+                  {" · "}
+                  {u.estimatedUsdLabel}
+                  {" · "}
+                  {new Date(u.createdAt).toLocaleString()}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : null}
 
       <h2 className="subhead">Update keys</h2>
       <p className="muted">Leave blank to keep the current key. Saved to the API server only.</p>

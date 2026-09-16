@@ -203,12 +203,19 @@ export default function DashboardPage() {
     setMsg("");
     startJob(id, "generate");
     try {
-      const res = await api<{ provider: string }>(`/content/${id}/generate`, {
+      const res = await api<{
+        provider: string;
+        usage?: { estimatedUsdLabel?: string; inputTokens?: number; outputTokens?: number };
+      }>(`/content/${id}/generate`, {
         method: "POST",
         body: JSON.stringify({ provider: "auto" }),
       });
       await finishJob();
-      setMsg(`Generated via ${res.provider}`);
+      setMsg(
+        res.usage?.estimatedUsdLabel
+          ? `Generated via ${res.provider} · ${res.usage.estimatedUsdLabel}`
+          : `Generated via ${res.provider}`
+      );
       await load();
     } catch (err) {
       setJob(null);

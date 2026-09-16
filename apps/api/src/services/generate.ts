@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { estimateUsd } from "../lib/costs";
 import { researchTopic } from "./research";
 
 export type GeneratedArticle = {
@@ -454,6 +455,11 @@ export async function generateForContent(
           provider: "tavily",
           model: "search",
           operation: "research",
+          estimatedUsd: estimateUsd({
+            provider: "tavily",
+            model: "search",
+            operation: "research",
+          }),
         },
       });
     }
@@ -507,6 +513,14 @@ export async function generateForContent(
     },
   });
 
+  const estimatedUsd = estimateUsd({
+    provider: article.provider,
+    model: article.model,
+    inputTokens: usage?.prompt_tokens,
+    outputTokens: usage?.completion_tokens,
+    operation: "generate_article",
+  });
+
   await prisma.aiUsage.create({
     data: {
       contentId: content.id,
@@ -515,6 +529,7 @@ export async function generateForContent(
       operation: "generate_article",
       inputTokens: usage?.prompt_tokens,
       outputTokens: usage?.completion_tokens,
+      estimatedUsd,
     },
   });
 
@@ -526,5 +541,16 @@ export async function generateForContent(
       : null,
     researchError,
     imagePrompt: article.imagePrompt ?? `Featured image for: ${article.title}`,
+    usage: {
+      inputTokens: usage?.prompt_tokens ?? null,
+      outputTokens: usage?.completion_tokens ?? null,
+      estimatedUsd,
+      estimatedUsdLabel: formatUsdLabel(estimatedUsd),
+    },
   };
+}
+
+function formatUsdLabel(n: number) {
+  if (n > 0 && n < 0.01) return `~$${n.toFixed(4)}`;
+  return `~$${n.toFixed(3)}`;
 }
