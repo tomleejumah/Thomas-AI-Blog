@@ -726,6 +726,14 @@ textarea {
   flex-shrink: 0;
 }
 
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
 .icon-close {
   width: 36px;
   height: 36px;

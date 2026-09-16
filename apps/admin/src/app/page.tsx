@@ -80,6 +80,13 @@ export default function DashboardPage() {
   const [bulkBusy, setBulkBusy] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [job, setJob] = useState<JobProgress | null>(null);
+  const [dialog, setDialog] = useState<
+    | { kind: "delete"; id: string; title: string; linked: boolean }
+    | { kind: "bulk-delete"; ids: string[]; linkedCount: number }
+    | { kind: "publish"; id: string; title: string }
+    | { kind: "notice"; title: string; body: string }
+    | null
+  >(null);
 
   const filtered = useMemo(
     () => contents.filter((c) => matchesFilter(c, filter)),
@@ -195,13 +202,16 @@ export default function DashboardPage() {
 
   async function runApprovePublish(id: string) {
     setMenuId(null);
-    if (
-      !confirm(
-        "Approve this article and publish it to WordPress as a DRAFT?\n\nYou can delete the draft in WP anytime."
-      )
-    ) {
-      return;
-    }
+    const item = contents.find((c) => c.id === id);
+    setDialog({
+      kind: "publish",
+      id,
+      title: item?.title ?? "this article",
+    });
+  }
+
+  async function confirmPublish(id: string) {
+    setDialog(null);
     setBusyId(id);
     setError("");
     setMsg("");
@@ -231,23 +241,22 @@ export default function DashboardPage() {
     }
   }
 
-  async function runDelete(id: string) {
+  function askDelete(id: string) {
     setMenuId(null);
     const item = contents.find((c) => c.id === id);
-    const linked = Boolean(item?.wpPostId || item?.wpUrl);
-    let deleteWp = false;
-    if (linked) {
-      const go = confirm(
-        "Delete from dashboard?\n\nOK = continue\nCancel = keep it"
-      );
-      if (!go) return;
-      deleteWp = confirm(
-        "Also move the WordPress draft to Trash?\n\nOK = trash in WP + delete here\nCancel = dashboard only (WP draft stays — delete it in WP Admin → Posts if needed)"
-      );
-    } else if (!confirm("Delete this item from the dashboard?")) {
-      return;
-    }
+    setDialog({
+      kind: "delete",
+      id,
+      title: item?.title ?? "this item",
+      linked: Boolean(item?.wpPostId || item?.wpUrl),
+    });
+  }
+
+  async function confirmDelete(id: string, deleteWp: boolean, linked: boolean) {
+    setDialog(null);
     setBusyId(id);
+    setError("");
+    setMsg("");
     try {
       const res = await api<{
         ok: boolean;
@@ -262,16 +271,22 @@ export default function DashboardPage() {
         next.delete(id);
         return next;
       });
+      await load();
       if (res.wpDeleted) {
-        setMsg("Deleted from dashboard and moved WP draft to Trash.");
+        setDialog({
+          kind: "notice",
+          title: "Deleted",
+          body: "Removed from the dashboard and moved the WordPress draft to Trash.",
+        });
       } else if (linked && !deleteWp) {
-        setMsg(
-          "Deleted from dashboard only. To remove the WP draft, open WordPress Admin → Posts (or Trash) and delete it there."
-        );
+        setDialog({
+          kind: "notice",
+          title: "Deleted from dashboard only",
+          body: "To remove the WP draft, open WordPress Admin → Posts (or Trash) and delete it there.",
+        });
       } else {
         setMsg("Deleted");
       }
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
     } finally {
@@ -296,25 +311,17 @@ export default function DashboardPage() {
     );
   }
 
-  async function runBulkDelete() {
+  function askBulkDelete() {
     const ids = [...selected];
     if (ids.length === 0) return;
-    const linked = contents.filter((c) => ids.includes(c.id) && (c.wpPostId || c.wpUrl));
-    let deleteWp = false;
-    if (linked.length > 0) {
-      if (
-        !confirm(
-          `Delete ${ids.length} selected item(s) from the dashboard?\n\n${linked.length} have a WordPress draft linked.`
-        )
-      ) {
-        return;
-      }
-      deleteWp = confirm(
-        `Also move ${linked.length} linked WordPress draft(s) to Trash?\n\nOK = trash in WP + delete here\nCancel = dashboard only (WP drafts stay)`
-      );
-    } else if (!confirm(`Delete ${ids.length} selected item(s) from the dashboard?`)) {
-      return;
-    }
+    const linkedCount = contents.filter(
+      (c) => ids.includes(c.id) && (c.wpPostId || c.wpUrl)
+    ).length;
+    setDialog({ kind: "bulk-delete", ids, linkedCount });
+  }
+
+  async function confirmBulkDelete(ids: string[], deleteWp: boolean, linkedCount: number) {
+    setDialog(null);
     setBulkBusy(true);
     setError("");
     setMsg("");
@@ -329,18 +336,24 @@ export default function DashboardPage() {
       const failed = results.filter((r) => r.status === "rejected").length;
       const ok = ids.length - failed;
       setSelected(new Set());
+      await load();
       if (failed) {
         setMsg(`Deleted ${ok}, failed ${failed}`);
-      } else if (linked.length > 0 && !deleteWp) {
-        setMsg(
-          `Deleted ${ok} from dashboard only. To remove WP drafts, open WordPress Admin → Posts and trash them there.`
-        );
-      } else if (linked.length > 0 && deleteWp) {
-        setMsg(`Deleted ${ok} (WP drafts moved to Trash where linked).`);
+      } else if (linkedCount > 0 && !deleteWp) {
+        setDialog({
+          kind: "notice",
+          title: "Deleted from dashboard only",
+          body: `Removed ${ok} item(s) here. To remove WP drafts, open WordPress Admin → Posts (or Trash) and delete them there.`,
+        });
+      } else if (linkedCount > 0 && deleteWp) {
+        setDialog({
+          kind: "notice",
+          title: "Deleted",
+          body: `Removed ${ok} item(s). Linked WordPress drafts were moved to Trash.`,
+        });
       } else {
         setMsg(`Deleted ${ok}`);
       }
-      await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Bulk delete failed");
     } finally {
@@ -441,7 +454,7 @@ export default function DashboardPage() {
               type="button"
               className="danger icon-btn"
               disabled={bulkBusy}
-              onClick={() => runBulkDelete()}
+              onClick={() => askBulkDelete()}
               title={`Delete ${selected.size} selected`}
               aria-label={`Delete ${selected.size} selected`}
             >
@@ -560,7 +573,7 @@ export default function DashboardPage() {
                             Approve &amp; publish draft
                           </button>
                         ) : null}
-                        <button type="button" className="danger" onClick={() => runDelete(c.id)}>
+                        <button type="button" className="danger" onClick={() => askDelete(c.id)}>
                           Delete
                         </button>
                       </div>
@@ -714,6 +727,152 @@ export default function DashboardPage() {
               Save
             </button>
           </form>
+        </div>
+      ) : null}
+
+      {dialog?.kind === "delete" ? (
+        <div className="modal" role="dialog" aria-modal="true">
+          <div className="modal-card form">
+            <div className="modal-head">
+              <h2>Delete content</h2>
+              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+                ×
+              </button>
+            </div>
+            <p>
+              Remove <strong>{dialog.title}</strong> from the dashboard?
+            </p>
+            {dialog.linked ? (
+              <p className="muted">
+                This item is linked to a WordPress draft. Choose whether to trash it in WP as well.
+              </p>
+            ) : null}
+            <div className="dialog-actions">
+              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+                Cancel
+              </button>
+              {dialog.linked ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => confirmDelete(dialog.id, false, true)}
+                  >
+                    Dashboard only
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => confirmDelete(dialog.id, true, true)}
+                  >
+                    Trash WP + delete
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => confirmDelete(dialog.id, false, false)}
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {dialog?.kind === "bulk-delete" ? (
+        <div className="modal" role="dialog" aria-modal="true">
+          <div className="modal-card form">
+            <div className="modal-head">
+              <h2>Delete selected</h2>
+              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+                ×
+              </button>
+            </div>
+            <p>
+              Delete <strong>{dialog.ids.length}</strong> selected item(s) from the dashboard?
+            </p>
+            {dialog.linkedCount > 0 ? (
+              <p className="muted">
+                {dialog.linkedCount} linked to WordPress drafts. Choose whether to trash those in WP too.
+              </p>
+            ) : null}
+            <div className="dialog-actions">
+              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+                Cancel
+              </button>
+              {dialog.linkedCount > 0 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => confirmBulkDelete(dialog.ids, false, dialog.linkedCount)}
+                  >
+                    Dashboard only
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    onClick={() => confirmBulkDelete(dialog.ids, true, dialog.linkedCount)}
+                  >
+                    Trash WP + delete
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => confirmBulkDelete(dialog.ids, false, 0)}
+                >
+                  Delete
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {dialog?.kind === "publish" ? (
+        <div className="modal" role="dialog" aria-modal="true">
+          <div className="modal-card form">
+            <div className="modal-head">
+              <h2>Publish draft</h2>
+              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+                ×
+              </button>
+            </div>
+            <p>
+              Approve <strong>{dialog.title}</strong> and send it to WordPress as a draft?
+            </p>
+            <p className="muted">You can trash the draft in WordPress anytime.</p>
+            <div className="dialog-actions">
+              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => confirmPublish(dialog.id)}>
+                Publish draft
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {dialog?.kind === "notice" ? (
+        <div className="modal" role="dialog" aria-modal="true">
+          <div className="modal-card form">
+            <div className="modal-head">
+              <h2>{dialog.title}</h2>
+              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+                ×
+              </button>
+            </div>
+            <p>{dialog.body}</p>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setDialog(null)}>
+                Dismiss
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </>
