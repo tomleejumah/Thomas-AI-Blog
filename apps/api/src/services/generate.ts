@@ -18,6 +18,11 @@ export type GenerateOptions = {
   brief?: string;
   provider?: "openai" | "gemini" | "auto";
   withImage?: boolean;
+  onStage?: (stage: {
+    stage: "researching" | "writing" | "saving";
+    label: string;
+    pct?: number;
+  }) => void;
 };
 
 const SYSTEM_JSON = `You are an elite magazine-level SEO blog writer and editor (think Condé Nast Traveler / specialist industry longform — not a thin AI outline).
@@ -32,7 +37,7 @@ WRITING STANDARD — mandatory:
 - SEO: natural keyword use; unique seoTitle (~50–60 chars) and metaDescription (~150–160 chars).
 - Locale: fully idiomatic in the requested language (en/pt/fr).
 - Facts: do NOT invent prices, guarantees, licenses, phone numbers, or business claims not in the brief.
-- imagePrompt: cinematic and specific.
+- imagePrompt: English photo brief for a REAL-looking featured image — natural light, documentary/lifestyle, imperfect reality. Never “AI art”, CGI, plastic skin, or over-processed stock.
 
 STRUCTURE VARIETY — critical (do NOT reuse a template):
 - Every article must feel uniquely shaped for THIS site + topic. Never copy a fixed skeleton like Hook → Overview → Tips → FAQ → CTA for every post.
@@ -124,7 +129,7 @@ function stubArticle(title: string, language: string): GeneratedArticle {
     },
     provider: "stub",
     model: "local-stub",
-    imagePrompt: `Professional photo for article: ${title}`,
+    imagePrompt: `Natural documentary photo for: ${title}. Real people/places if relevant, soft natural light, no AI-art look.`,
   };
 }
 
@@ -177,7 +182,10 @@ async function openaiArticle(
     }),
   });
 
-  if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`OpenAI ${res.status}: ${text}`);
+  }
 
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -256,7 +264,18 @@ async function geminiArticle(
   };
 }
 
-/** Featured image bytes — OpenAI Images, then Gemini Imagen */
+function naturalPhotoPrompt(prompt: string) {
+  const base = prompt.trim().slice(0, 900);
+  return [
+    base,
+    "Style: photorealistic natural photography as if shot on a full-frame camera by a travel photographer.",
+    "Natural skin texture, real lighting, authentic environment, slight grain OK.",
+    "Avoid: AI-art look, plastic skin, oversharpening, fake HDR, watermarks, text overlays, logos, CGI, illustration.",
+    "Aspect: landscape 16:9 suitable as a WordPress featured image.",
+  ].join(" ");
+}
+
+/** Featured image — OpenAI first, Gemini native image as fallback */
 export async function generateFeaturedImageBytes(prompt: string): Promise<{
   bytes: Buffer;
   mime: string;
@@ -264,13 +283,15 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
   model: string;
 } | null> {
   const errors: string[] = [];
+  const fullPrompt = naturalPhotoPrompt(prompt);
+
   const openaiKey = process.env.OPENAI_API_KEY;
   if (openaiKey) {
     try {
       const model = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1";
       const payload: Record<string, unknown> = {
         model,
-        prompt: prompt.slice(0, 1000),
+        prompt: fullPrompt.slice(0, 1000),
         n: 1,
       };
       if (model.includes("dall-e")) {
@@ -314,31 +335,59 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
 
   const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (geminiKey) {
-    try {
-      const model = process.env.GEMINI_IMAGE_MODEL ?? "imagen-3.0-generate-002";
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:predict?key=${encodeURIComponent(geminiKey)}`;
-      const res = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          instances: [{ prompt: prompt.slice(0, 1000) }],
-          parameters: { sampleCount: 1 },
-        }),
-      });
-      if (!res.ok) throw new Error(`Gemini image ${res.status}: ${await res.text()}`);
-      const data = (await res.json()) as {
-        predictions?: Array<{ bytesBase64Encoded?: string; mimeType?: string }>;
-      };
-      const pred = data.predictions?.[0];
-      if (!pred?.bytesBase64Encoded) throw new Error("Gemini image empty");
-      return {
-        bytes: Buffer.from(pred.bytesBase64Encoded, "base64"),
-        mime: pred.mimeType ?? "image/png",
-        provider: "gemini",
-        model,
-      };
-    } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
+    const models = [
+      process.env.GEMINI_IMAGE_MODEL,
+      "gemini-3.1-flash-image",
+      "gemini-2.5-flash-image",
+      "gemini-2.0-flash-preview-image-generation",
+    ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
+
+    for (const model of models) {
+      try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
+        const res = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+            generationConfig: {
+              responseModalities: ["TEXT", "IMAGE"],
+            },
+          }),
+        });
+        if (!res.ok) throw new Error(`Gemini image ${res.status}: ${await res.text()}`);
+        const data = (await res.json()) as {
+          candidates?: Array<{
+            content?: {
+              parts?: Array<{
+                inlineData?: { mimeType?: string; data?: string };
+                inline_data?: { mime_type?: string; data?: string };
+              }>;
+            };
+          }>;
+        };
+        const parts = data.candidates?.[0]?.content?.parts ?? [];
+        for (const part of parts) {
+          const inline = part.inlineData ?? part.inline_data;
+          const b64 = inline?.data;
+          const mime =
+            ("mimeType" in (inline ?? {})
+              ? (inline as { mimeType?: string }).mimeType
+              : (inline as { mime_type?: string } | undefined)?.mime_type) ??
+            "image/png";
+          if (b64) {
+            return {
+              bytes: Buffer.from(b64, "base64"),
+              mime,
+              provider: "gemini",
+              model,
+            };
+          }
+        }
+        throw new Error("Gemini image empty (no inline image part)");
+      } catch (err) {
+        errors.push(err instanceof Error ? err.message : String(err));
+      }
     }
   }
 

@@ -223,7 +223,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       if (body.withImage !== false) {
         const prompt =
           body.imagePrompt ??
-          `Professional yacht charter lifestyle photo for: ${content.title}`;
+          `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
         try {
           const img = await generateFeaturedImageBytes(prompt);
           if (img) {
