@@ -3,7 +3,7 @@ import path from "node:path";
 import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { formatUsd } from "../lib/costs";
+import { estimateUsd, formatUsd } from "../lib/costs";
 
 const ENV_PATH = path.resolve(__dirname, "../../../../.env");
 const AUDIT_PATH = path.resolve(__dirname, "../../../../logs/key-audit.log");
@@ -197,51 +197,48 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
   app.get("/usage", async () => {
     const recent = await prisma.aiUsage.findMany({
       orderBy: { createdAt: "desc" },
-      take: 40,
-      include: {
-        content: { select: { id: true, title: true } },
-      },
+      take: 500,
     });
 
-    const totals = await prisma.aiUsage.groupBy({
-      by: ["provider"],
-      _sum: {
-        inputTokens: true,
-        outputTokens: true,
-        estimatedUsd: true,
-      },
-      _count: true,
+    const providers = ["openai", "gemini", "tavily"] as const;
+    const byProvider = providers.map((provider) => {
+      const rows = recent.filter((u) => u.provider.toLowerCase().includes(provider));
+      let inputTokens = 0;
+      let outputTokens = 0;
+      let estimatedUsd = 0;
+      for (const u of rows) {
+        inputTokens += u.inputTokens ?? 0;
+        outputTokens += u.outputTokens ?? 0;
+        estimatedUsd +=
+          u.estimatedUsd ??
+          estimateUsd({
+            provider: u.provider,
+            model: u.model,
+            inputTokens: u.inputTokens,
+            outputTokens: u.outputTokens,
+            operation: u.operation,
+          });
+      }
+      const last = rows[0];
+      return {
+        provider,
+        calls: rows.length,
+        inputTokens,
+        outputTokens,
+        estimatedUsd: Math.round(estimatedUsd * 1_000_000) / 1_000_000,
+        estimatedUsdLabel: formatUsd(estimatedUsd),
+        lastAt: last?.createdAt ?? null,
+        lastOperation: last?.operation ?? null,
+      };
     });
 
-    const estimatedUsdTotal = totals.reduce(
-      (acc, row) => acc + (row._sum.estimatedUsd ?? 0),
-      0
-    );
+    const estimatedUsdTotal = byProvider.reduce((acc, row) => acc + row.estimatedUsd, 0);
 
     return {
-      estimatedUsdTotal,
+      estimatedUsdTotal: Math.round(estimatedUsdTotal * 1_000_000) / 1_000_000,
       estimatedUsdTotalLabel: formatUsd(estimatedUsdTotal),
-      note: "Estimates from logged tokens/searches — not live provider billing balances.",
-      byProvider: totals.map((row) => ({
-        provider: row.provider,
-        calls: row._count,
-        inputTokens: row._sum.inputTokens ?? 0,
-        outputTokens: row._sum.outputTokens ?? 0,
-        estimatedUsd: row._sum.estimatedUsd ?? 0,
-        estimatedUsdLabel: formatUsd(row._sum.estimatedUsd ?? 0),
-      })),
-      recent: recent.map((u) => ({
-        id: u.id,
-        provider: u.provider,
-        model: u.model,
-        operation: u.operation,
-        inputTokens: u.inputTokens,
-        outputTokens: u.outputTokens,
-        estimatedUsd: u.estimatedUsd,
-        estimatedUsdLabel: formatUsd(u.estimatedUsd),
-        createdAt: u.createdAt,
-        contentTitle: u.content?.title ?? null,
-      })),
+      note: "Per-provider estimates from logged usage — not live billing balances.",
+      byProvider,
     };
   });
 };

@@ -27,18 +27,8 @@ type UsagePayload = {
     outputTokens: number;
     estimatedUsd: number;
     estimatedUsdLabel: string;
-  }>;
-  recent: Array<{
-    id: string;
-    provider: string;
-    model: string;
-    operation: string;
-    inputTokens: number | null;
-    outputTokens: number | null;
-    estimatedUsd: number | null;
-    estimatedUsdLabel: string;
-    createdAt: string;
-    contentTitle: string | null;
+    lastAt: string | null;
+    lastOperation: string | null;
   }>;
 };
 
@@ -167,47 +157,35 @@ export default function MaintenancePage() {
       </div>
 
       <h2 className="subhead">AI usage</h2>
-      <p className="muted">{usage?.note ?? "Logged from generate / research / image calls."}</p>
-      <div className="usage-summary">
-        <div className="usage-total">
-          <span className="meta">Estimated total</span>
-          <strong>{usage?.estimatedUsdTotalLabel ?? "—"}</strong>
-        </div>
-        <div className="usage-providers">
-          {(usage?.byProvider ?? []).map((p) => (
-            <div key={p.provider} className="usage-provider">
-              <strong>{p.provider}</strong>
-              <span className="meta">
-                {p.calls} calls · in {p.inputTokens} · out {p.outputTokens} · {p.estimatedUsdLabel}
-              </span>
-            </div>
-          ))}
-          {!usage?.byProvider?.length ? <p className="muted">No usage logged yet. Generate an article first.</p> : null}
-        </div>
+      <p className="muted">{usage?.note ?? "Per-provider estimates from logged calls."}</p>
+      <div className="usage-total-line">
+        <span className="meta">All providers</span>
+        <strong>{usage?.estimatedUsdTotalLabel ?? "—"}</strong>
       </div>
-      {usage?.recent?.length ? (
-        <div className="list usage-list">
-          {usage.recent.map((u) => (
-            <div key={u.id} className="row">
-              <div className="row-main">
-                <strong>
-                  {u.operation} · {u.provider}
-                </strong>
-                <div className="meta">
-                  {u.contentTitle ?? "—"} · {u.model}
-                  {u.inputTokens != null || u.outputTokens != null
-                    ? ` · tokens ${u.inputTokens ?? 0}/${u.outputTokens ?? 0}`
-                    : ""}
-                  {" · "}
-                  {u.estimatedUsdLabel}
-                  {" · "}
-                  {new Date(u.createdAt).toLocaleString()}
-                </div>
+      <div className="usage-cards">
+        {(["openai", "gemini", "tavily"] as const).map((name) => {
+          const p = usage?.byProvider.find((x) => x.provider === name);
+          return (
+            <div key={name} className="usage-card">
+              <div className="usage-card-head">
+                <strong>{name === "openai" ? "OpenAI" : name === "gemini" ? "Gemini" : "Tavily"}</strong>
+                <span className="usage-card-cost">{p?.estimatedUsdLabel ?? "~$0.000"}</span>
+              </div>
+              <div className="meta">
+                {p?.calls ?? 0} calls
+                {name !== "tavily"
+                  ? ` · in ${p?.inputTokens ?? 0} · out ${p?.outputTokens ?? 0}`
+                  : ""}
+              </div>
+              <div className="meta">
+                {p?.lastAt
+                  ? `Last ${p.lastOperation ?? "call"} · ${new Date(p.lastAt).toLocaleString()}`
+                  : "No calls yet"}
               </div>
             </div>
-          ))}
-        </div>
-      ) : null}
+          );
+        })}
+      </div>
 
       <h2 className="subhead">Update keys</h2>
       <p className="muted">Leave blank to keep the current key. Saved to the API server only.</p>

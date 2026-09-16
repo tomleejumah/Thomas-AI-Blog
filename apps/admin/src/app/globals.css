@@ -488,40 +488,44 @@ textarea {
   margin-bottom: 1.5rem;
 }
 
-.usage-summary {
+.usage-total-line {
   display: flex;
-  flex-wrap: wrap;
-  gap: 1.25rem;
-  align-items: flex-start;
-  margin: 0.75rem 0 1rem;
-  padding: 0.85rem 0;
-  border-bottom: 1px solid var(--line);
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin: 0.5rem 0 0.85rem;
 }
 
-.usage-total {
+.usage-total-line strong {
+  font-size: 1.25rem;
+}
+
+.usage-cards {
   display: grid;
-  gap: 0.2rem;
-  min-width: 8rem;
-}
-
-.usage-total strong {
-  font-size: 1.35rem;
-}
-
-.usage-providers {
-  display: grid;
-  gap: 0.45rem;
-  flex: 1;
-}
-
-.usage-provider {
-  display: grid;
-  gap: 0.15rem;
-}
-
-.usage-list {
-  margin-top: 0;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
   margin-bottom: 1.5rem;
+}
+
+.usage-card {
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  display: grid;
+  gap: 0.35rem;
+}
+
+.usage-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+}
+
+.usage-card-cost {
+  color: #3ecf8e;
+  font-weight: 600;
 }
 
 .status-row {
