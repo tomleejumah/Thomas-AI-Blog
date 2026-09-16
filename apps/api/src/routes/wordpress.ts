@@ -5,6 +5,7 @@ import { siteWpAuth } from "../lib/siteAuth";
 import {
   createWpDraftPost,
   listWpCategories,
+  listWpPosts,
   testWpConnection,
 } from "../services/wordpress";
 
@@ -69,12 +70,52 @@ export const wordpressRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
+    // Index published posts/pages for internal-link context
+    let pagesIndexed = 0;
+    for (const type of ["posts", "pages"] as const) {
+      try {
+        const items = await listWpPosts(auth.baseUrl, auth.username, auth.appPassword, {
+          type,
+          perPage: 40,
+        });
+        for (const item of items) {
+          const url = item.link;
+          if (!url) continue;
+          const title = item.title?.rendered?.replace(/<[^>]+>/g, "").trim() || "Untitled";
+          const summary = item.excerpt?.rendered
+            ?.replace(/<[^>]+>/g, "")
+            .trim()
+            .slice(0, 400);
+          await prisma.sitePage.upsert({
+            where: { siteId_url: { siteId: site.id, url } },
+            create: {
+              siteId: site.id,
+              wpPostId: item.id,
+              title,
+              url,
+              summary: summary || null,
+              pageType: type === "pages" ? "page" : "post",
+            },
+            update: {
+              wpPostId: item.id,
+              title,
+              summary: summary || null,
+              pageType: type === "pages" ? "page" : "post",
+            },
+          });
+          pagesIndexed += 1;
+        }
+      } catch {
+        // non-fatal — categories still saved
+      }
+    }
+
     const saved = await prisma.category.findMany({
       where: { siteId: site.id },
       orderBy: { name: "asc" },
     });
 
-    return { scanned: saved.length, categories: saved };
+    return { scanned: saved.length, pagesIndexed, categories: saved };
   });
 
   app.post("/:siteId/publish-draft", async (req, reply) => {

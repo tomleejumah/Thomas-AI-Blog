@@ -47,7 +47,13 @@ function userPayload(
   title: string,
   language: string,
   brief?: string,
-  site?: { name?: string; baseUrl?: string; category?: string | null },
+  site?: {
+    name?: string;
+    baseUrl?: string;
+    category?: string | null;
+    businessFacts?: Array<{ key: string; value: string }>;
+    linkTargets?: Array<{ title: string; url: string }>;
+  },
   research?: {
     provider: string;
     answers: string[];
@@ -75,6 +81,12 @@ function userPayload(
           name: site.name ?? null,
           url: site.baseUrl ?? null,
           category: site.category ?? null,
+          businessFacts: site.businessFacts?.length ? site.businessFacts : null,
+          linkTargets: site.linkTargets?.length ? site.linkTargets : null,
+          factsInstruction:
+            "Use ONLY these approved business facts. Never invent prices, phones, licenses, guarantees, or services not listed.",
+          linkingInstruction:
+            "Where natural, insert 2–5 contextual <a href> links to linkTargets using varied anchor text. Do not dump a link list.",
         }
       : null,
     research: research
@@ -121,7 +133,13 @@ function parseArticleJson(raw: string): GeneratedArticle {
   return JSON.parse(cleaned) as GeneratedArticle;
 }
 
-type SiteCtx = { name?: string; baseUrl?: string; category?: string | null };
+type SiteCtx = {
+  name?: string;
+  baseUrl?: string;
+  category?: string | null;
+  businessFacts?: Array<{ key: string; value: string }>;
+  linkTargets?: Array<{ title: string; url: string }>;
+};
 type ResearchCtx = {
   provider: string;
   answers: string[];
@@ -342,10 +360,27 @@ export async function generateForContent(
 
   const lang = content.language;
   const prefer = options.provider ?? "auto";
-  const siteCtx = {
+
+  const [facts, pages] = await Promise.all([
+    prisma.businessFact.findMany({
+      where: { siteId: content.siteId },
+      orderBy: { key: "asc" },
+      take: 40,
+    }),
+    prisma.sitePage.findMany({
+      where: { siteId: content.siteId },
+      orderBy: { updatedAt: "desc" },
+      take: 30,
+      select: { title: true, url: true },
+    }),
+  ]);
+
+  const siteCtx: SiteCtx = {
     name: content.site.name,
     baseUrl: content.site.baseUrl,
     category: content.category?.name ?? null,
+    businessFacts: facts.map((f) => ({ key: f.key, value: f.value })),
+    linkTargets: pages.map((p) => ({ title: p.title, url: p.url })),
   };
 
   let research: ResearchCtx | null = null;

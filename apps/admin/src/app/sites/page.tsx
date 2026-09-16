@@ -19,6 +19,8 @@ export default function SitesPage() {
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [factsSite, setFactsSite] = useState<Site | null>(null);
+  const [factsText, setFactsText] = useState("");
   const [error, setError] = useState("");
 
   const load = useCallback(async () => {
@@ -52,12 +54,16 @@ export default function SitesPage() {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      const scanJson = await api<{ scanned: number }>(
+      const scanJson = await api<{ scanned: number; pagesIndexed?: number }>(
         `/wordpress/${createJson.site.id}/scan`,
         { method: "POST", body: "{}" }
       );
       setOk(true);
-      setMsg(`Connected. Scanned ${scanJson.scanned} categories.`);
+      setMsg(
+        `Connected. Scanned ${scanJson.scanned} categories${
+          scanJson.pagesIndexed != null ? `, ${scanJson.pagesIndexed} pages/posts` : ""
+        }.`
+      );
       setShowAdd(false);
       e.currentTarget.reset();
       await load();
@@ -73,11 +79,17 @@ export default function SitesPage() {
     setBusyId(id);
     setError("");
     try {
-      const scan = await api<{ scanned: number }>(`/wordpress/${id}/scan`, {
+      const scan = await api<{ scanned: number; pagesIndexed?: number }>(
+        `/wordpress/${id}/scan`,
+        {
         method: "POST",
         body: "{}",
       });
-      setMsg(`Rescanned ${scan.scanned} categories.`);
+      setMsg(
+        `Rescanned ${scan.scanned} categories${
+          scan.pagesIndexed != null ? `, ${scan.pagesIndexed} pages/posts` : ""
+        }.`
+      );
       setOk(true);
       await load();
     } catch (err) {
@@ -101,6 +113,54 @@ export default function SitesPage() {
       setError(err instanceof Error ? err.message : "Delete failed");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  async function openFacts(s: Site) {
+    setBusyId(s.id);
+    setError("");
+    try {
+      const data = await api<{ facts: Array<{ key: string; value: string }> }>(
+        `/sites/${s.id}/facts`
+      );
+      setFactsText(
+        (data.facts ?? []).map((f) => `${f.key}: ${f.value}`).join("\n")
+      );
+      setFactsSite(s);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load facts");
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function saveFacts(e: FormEvent) {
+    e.preventDefault();
+    if (!factsSite) return;
+    setBusy(true);
+    setError("");
+    const facts = factsText
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => {
+        const i = line.indexOf(":");
+        if (i === -1) return { key: line, value: "" };
+        return { key: line.slice(0, i).trim(), value: line.slice(i + 1).trim() };
+      })
+      .filter((f) => f.key && f.value);
+    try {
+      await api(`/sites/${factsSite.id}/facts`, {
+        method: "PUT",
+        body: JSON.stringify({ facts }),
+      });
+      setMsg(`Saved ${facts.length} business facts for ${factsSite.name}`);
+      setOk(true);
+      setFactsSite(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -142,6 +202,9 @@ export default function SitesPage() {
                 {busyId === s.id ? <span className="spinner sm" /> : null}
                 <button type="button" disabled={busyId === s.id} onClick={() => rescan(s.id)}>
                   Rescan
+                </button>
+                <button type="button" disabled={busyId === s.id} onClick={() => openFacts(s)}>
+                  Facts
                 </button>
                 <button
                   type="button"
@@ -199,6 +262,39 @@ export default function SitesPage() {
               ) : (
                 "Connect & scan"
               )}
+            </button>
+          </form>
+        </div>
+      ) : null}
+
+      {factsSite ? (
+        <div className="modal" role="dialog">
+          <form className="modal-card form" onSubmit={saveFacts}>
+            <div className="modal-head">
+              <h2>Business facts — {factsSite.name}</h2>
+              <button
+                type="button"
+                className="icon-close"
+                aria-label="Close"
+                onClick={() => setFactsSite(null)}
+              >
+                ×
+              </button>
+            </div>
+            <p className="muted">
+              One fact per line as <code>key: value</code>. Used on Generate so the AI does not invent business claims.
+            </p>
+            <label>
+              Facts
+              <textarea
+                rows={10}
+                value={factsText}
+                onChange={(e) => setFactsText(e.target.value)}
+                placeholder={"location: Lisbon, Portugal\nservices: private yacht charters\ntone: luxury leisure"}
+              />
+            </label>
+            <button type="submit" disabled={busy}>
+              {busy ? "Saving…" : "Save facts"}
             </button>
           </form>
         </div>

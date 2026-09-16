@@ -72,6 +72,10 @@ export default function DashboardPage() {
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [createSiteId, setCreateSiteId] = useState("");
+  const [createCategories, setCreateCategories] = useState<
+    Array<{ id: string; name: string }>
+  >([]);
   const [preview, setPreview] = useState<Content | null>(null);
   const [edit, setEdit] = useState<Content | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
@@ -133,6 +137,18 @@ export default function DashboardPage() {
     setJob(null);
   }
 
+  useEffect(() => {
+    if (!createSiteId) {
+      setCreateCategories([]);
+      return;
+    }
+    api<{ categories: Array<{ id: string; name: string }> }>(
+      `/sites/${createSiteId}/categories`
+    )
+      .then((d) => setCreateCategories(d.categories ?? []))
+      .catch(() => setCreateCategories([]));
+  }, [createSiteId]);
+
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setCreating(true);
@@ -141,6 +157,7 @@ export default function DashboardPage() {
     const fd = new FormData(e.currentTarget);
     const payload = {
       siteId: String(fd.get("siteId") ?? ""),
+      categoryId: String(fd.get("categoryId") ?? "") || undefined,
       title: String(fd.get("title") ?? ""),
       language: String(fd.get("language") ?? "en"),
       brief: String(fd.get("brief") ?? "") || undefined,
@@ -151,6 +168,7 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify({
           siteId: payload.siteId,
+          categoryId: payload.categoryId,
           title: payload.title,
           language: payload.language,
         }),
@@ -403,7 +421,15 @@ export default function DashboardPage() {
           <h1>Dashboard</h1>
           <p className="lead">Your content queue — generate, review, then send a draft to WordPress.</p>
         </div>
-        <button type="button" className="add-btn" onClick={() => setShowCreate(true)} title="New content">
+        <button
+          type="button"
+          className="add-btn"
+          onClick={() => {
+            setCreateSiteId(sites[0]?.id ?? "");
+            setShowCreate(true);
+          }}
+          title="New content"
+        >
           +
         </button>
       </div>
@@ -612,13 +638,29 @@ export default function DashboardPage() {
             </div>
             <label>
               Site
-              <select name="siteId" required defaultValue="">
+              <select
+                name="siteId"
+                required
+                value={createSiteId}
+                onChange={(e) => setCreateSiteId(e.target.value)}
+              >
                 <option value="" disabled>
                   Select site
                 </option>
                 {sites.map((s) => (
                   <option key={s.id} value={s.id}>
                     {s.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Category
+              <select name="categoryId" defaultValue="">
+                <option value="">None (optional)</option>
+                {createCategories.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
                   </option>
                 ))}
               </select>

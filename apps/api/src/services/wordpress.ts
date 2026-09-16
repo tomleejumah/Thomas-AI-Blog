@@ -104,9 +104,19 @@ export async function createWpDraftPost(
     status?: "draft" | "publish";
     featuredMediaId?: number;
     excerpt?: string;
+    seo?: {
+      focusKeyword?: string;
+      seoTitle?: string;
+      metaDescription?: string;
+    };
   }
 ) {
-  return wpFetch(baseUrl, username, appPassword, "/wp/v2/posts", {
+  const meta: Record<string, string> = {};
+  if (input.seo?.focusKeyword) meta.rank_math_focus_keyword = input.seo.focusKeyword;
+  if (input.seo?.seoTitle) meta.rank_math_title = input.seo.seoTitle;
+  if (input.seo?.metaDescription) meta.rank_math_description = input.seo.metaDescription;
+
+  const post = (await wpFetch(baseUrl, username, appPassword, "/wp/v2/posts", {
     method: "POST",
     body: JSON.stringify({
       title: input.title,
@@ -115,8 +125,23 @@ export async function createWpDraftPost(
       categories: input.categories ?? [],
       featured_media: input.featuredMediaId ?? 0,
       excerpt: input.excerpt ?? "",
+      ...(Object.keys(meta).length ? { meta } : {}),
     }),
-  });
+  })) as { id: number; link?: string };
+
+  // Rank Math meta sometimes needs an explicit update after create
+  if (post?.id && Object.keys(meta).length) {
+    try {
+      await wpFetch(baseUrl, username, appPassword, `/wp/v2/posts/${post.id}`, {
+        method: "POST",
+        body: JSON.stringify({ meta }),
+      });
+    } catch {
+      // non-fatal — draft still published
+    }
+  }
+
+  return post;
 }
 
 /** Move a WP post to Trash (not permanent). */
@@ -129,4 +154,27 @@ export async function deleteWpPost(
   return wpFetch(baseUrl, username, appPassword, `/wp/v2/posts/${postId}`, {
     method: "DELETE",
   });
+}
+
+export async function listWpPosts(
+  baseUrl: string,
+  username: string,
+  appPassword: string,
+  opts: { type?: "posts" | "pages"; perPage?: number } = {}
+) {
+  const type = opts.type ?? "posts";
+  const perPage = opts.perPage ?? 50;
+  return wpFetch(
+    baseUrl,
+    username,
+    appPassword,
+    `/wp/v2/${type}?per_page=${perPage}&status=publish&_fields=id,title,link,excerpt`
+  ) as Promise<
+    Array<{
+      id: number;
+      title?: { rendered?: string };
+      link?: string;
+      excerpt?: { rendered?: string };
+    }>
+  >;
 }

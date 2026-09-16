@@ -55,4 +55,58 @@ export const siteRoutes: FastifyPluginAsync = async (app) => {
     await prisma.site.delete({ where: { id } });
     return { ok: true };
   });
+
+  app.get("/:id/categories", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const site = await prisma.site.findUnique({ where: { id } });
+    if (!site) return reply.code(404).send({ error: "Site not found" });
+    const categories = await prisma.category.findMany({
+      where: { siteId: id },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, slug: true, parentId: true, wpCategoryId: true },
+    });
+    return { categories };
+  });
+
+  app.get("/:id/facts", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const site = await prisma.site.findUnique({ where: { id } });
+    if (!site) return reply.code(404).send({ error: "Site not found" });
+    const facts = await prisma.businessFact.findMany({
+      where: { siteId: id },
+      orderBy: { key: "asc" },
+    });
+    return { facts };
+  });
+
+  app.put("/:id/facts", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const site = await prisma.site.findUnique({ where: { id } });
+    if (!site) return reply.code(404).send({ error: "Site not found" });
+    const body = z
+      .object({
+        facts: z.array(
+          z.object({
+            key: z.string().min(1),
+            value: z.string().min(1),
+          })
+        ),
+      })
+      .parse(req.body ?? {});
+
+    await prisma.$transaction([
+      prisma.businessFact.deleteMany({ where: { siteId: id } }),
+      ...body.facts.map((f) =>
+        prisma.businessFact.create({
+          data: { siteId: id, key: f.key.trim(), value: f.value.trim() },
+        })
+      ),
+    ]);
+
+    const facts = await prisma.businessFact.findMany({
+      where: { siteId: id },
+      orderBy: { key: "asc" },
+    });
+    return { facts };
+  });
 };
