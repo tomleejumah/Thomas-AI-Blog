@@ -551,7 +551,8 @@ export default function DashboardPage() {
                   {c.wpUrl ? (
                     <div className="row-link">
                       <a href={c.wpUrl} target="_blank" rel="noreferrer">
-                        {c.wpUrl}
+                        <span className="row-link-full">{c.wpUrl}</span>
+                        <span className="row-link-short">Open on WordPress</span>
                       </a>
                     </div>
                   ) : null}
@@ -569,43 +570,74 @@ export default function DashboardPage() {
                 </div>
                 <div className="actions">
                   {busy && !rowJob ? <span className="spinner sm" /> : null}
-                  {c.wpUrl ? (
-                    <a
-                      className="btn-link"
-                      href={c.wpUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      View
-                    </a>
-                  ) : (
-                    <button type="button" disabled={busy || bulkBusy} onClick={() => runGenerate(c.id)}>
-                      {c.bodyHtml ? "Regenerate" : "Generate"}
-                    </button>
-                  )}
-                  {c.bodyHtml ? (
-                    <button
-                      type="button"
-                      disabled={busy || bulkBusy}
-                      onClick={() => {
-                        setMenuId(null);
-                        setPreview(c);
-                      }}
-                    >
-                      Preview
-                    </button>
-                  ) : null}
+                  <div className="actions-quick">
+                    {c.wpUrl ? (
+                      <a
+                        className="btn-link"
+                        href={c.wpUrl}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        View
+                      </a>
+                    ) : (
+                      <button type="button" disabled={busy || bulkBusy} onClick={() => runGenerate(c.id)}>
+                        {c.bodyHtml ? "Regenerate" : "Generate"}
+                      </button>
+                    )}
+                    {c.bodyHtml ? (
+                      <button
+                        type="button"
+                        disabled={busy || bulkBusy}
+                        onClick={() => {
+                          setMenuId(null);
+                          setPreview(c);
+                        }}
+                      >
+                        Preview
+                      </button>
+                    ) : null}
+                  </div>
                   <div className="more-wrap">
                     <button
                       type="button"
-                      className="ghost"
+                      className="ghost icon-more"
+                      aria-label="More actions"
+                      aria-expanded={menuId === c.id}
                       disabled={busy || bulkBusy}
                       onClick={() => setMenuId(menuId === c.id ? null : c.id)}
                     >
-                      ···
+                      ⋮
                     </button>
                     {menuId === c.id ? (
                       <div className="more-menu">
+                        {!c.wpUrl ? (
+                          <button
+                            type="button"
+                            disabled={busy || bulkBusy}
+                            onClick={() => {
+                              setMenuId(null);
+                              runGenerate(c.id);
+                            }}
+                          >
+                            {c.bodyHtml ? "Regenerate" : "Generate"}
+                          </button>
+                        ) : (
+                          <a href={c.wpUrl} target="_blank" rel="noreferrer">
+                            View on WordPress
+                          </a>
+                        )}
+                        {c.bodyHtml ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setMenuId(null);
+                              setPreview(c);
+                            }}
+                          >
+                            Preview
+                          </button>
+                        ) : null}
                         <button type="button" onClick={() => openEdit(c)}>
                           Edit
                         </button>
