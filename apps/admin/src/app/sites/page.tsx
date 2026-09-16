@@ -168,20 +168,29 @@ export default function SitesPage() {
             </div>
             <label>
               Site name
-              <input name="name" required placeholder="LisbonYacht" />
+              <input name="name" required placeholder="LisbonYacht" autoComplete="off" />
             </label>
             <label>
               Site URL
-              <input name="baseUrl" required type="url" placeholder="https://example.com" />
+              <input name="baseUrl" required type="url" placeholder="https://example.com" autoComplete="off" />
             </label>
             <label>
               WP username
-              <input name="wpUsername" required />
+              <input name="wpUsername" required placeholder="newadmin_lisbon" autoComplete="off" />
             </label>
             <label>
               Application Password
-              <input name="wpAppPassword" required type="password" />
+              <input
+                name="wpAppPassword"
+                required
+                type="password"
+                placeholder="xxxx xxxx xxxx xxxx xxxx xxxx"
+                autoComplete="new-password"
+              />
             </label>
+            <p className="muted" style={{ marginTop: "-0.5rem" }}>
+              Create on that site: WP Admin → Users → Profile → Application Passwords. Paste it here (not the login password).
+            </p>
             <button type="submit" disabled={busy}>
               {busy ? (
                 <span className="btn-row">
