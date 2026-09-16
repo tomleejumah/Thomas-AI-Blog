@@ -22,6 +22,7 @@ export default function SitesPage() {
   const [factsSite, setFactsSite] = useState<Site | null>(null);
   const [factsText, setFactsText] = useState("");
   const [error, setError] = useState("");
+  const [menuId, setMenuId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const data = await api<{ sites: Site[] }>("/sites");
@@ -200,20 +201,66 @@ export default function SitesPage() {
               </div>
               <div className="actions">
                 {busyId === s.id ? <span className="spinner sm" /> : null}
-                <button type="button" disabled={busyId === s.id} onClick={() => rescan(s.id)}>
-                  Rescan
-                </button>
-                <button type="button" disabled={busyId === s.id} onClick={() => openFacts(s)}>
-                  Facts
-                </button>
-                <button
-                  type="button"
-                  className="danger"
-                  disabled={busyId === s.id}
-                  onClick={() => remove(s.id, s.name)}
-                >
-                  Delete
-                </button>
+                <div className="actions-quick">
+                  <button type="button" disabled={busyId === s.id} onClick={() => rescan(s.id)}>
+                    Rescan
+                  </button>
+                  <button type="button" disabled={busyId === s.id} onClick={() => openFacts(s)}>
+                    Facts
+                  </button>
+                  <button
+                    type="button"
+                    className="danger"
+                    disabled={busyId === s.id}
+                    onClick={() => remove(s.id, s.name)}
+                  >
+                    Delete
+                  </button>
+                </div>
+                <div className="more-wrap more-mobile-only">
+                  <button
+                    type="button"
+                    className="ghost icon-more"
+                    aria-label="More actions"
+                    aria-expanded={menuId === s.id}
+                    disabled={busyId === s.id}
+                    onClick={() => setMenuId(menuId === s.id ? null : s.id)}
+                  >
+                    ⋮
+                  </button>
+                  {menuId === s.id ? (
+                    <div className="more-menu">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuId(null);
+                          rescan(s.id);
+                        }}
+                      >
+                        Rescan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMenuId(null);
+                          openFacts(s);
+                        }}
+                      >
+                        Facts
+                      </button>
+                      <button
+                        type="button"
+                        className="danger"
+                        onClick={() => {
+                          setMenuId(null);
+                          remove(s.id, s.name);
+                        }}
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
               </div>
             </div>
           ))
