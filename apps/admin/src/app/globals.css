@@ -33,35 +33,40 @@ a {
   display: grid;
   grid-template-columns: 240px 1fr;
   min-height: 100vh;
-  align-content: start;
 }
 
 .topbar {
   border-right: 1px solid var(--line);
-  background: rgba(15, 20, 25, 0.85);
+  background: rgba(15, 20, 25, 0.95);
   padding: 1.5rem 1rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  min-height: 100%;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  align-self: start;
 }
 
 .brand {
   font-weight: 700;
   letter-spacing: 0.02em;
   margin-bottom: 0.75rem;
+  flex-shrink: 0;
 }
 
 .logout-btn {
   width: 100%;
   margin-top: auto;
+  flex-shrink: 0;
 }
 
 .topbar-nav {
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .topbar-nav a {
@@ -731,6 +736,8 @@ textarea {
     position: sticky;
     top: 0;
     z-index: 40;
+    height: auto;
+    align-self: stretch;
     border-right: 0;
     border-bottom: 1px solid var(--line);
     padding: 0.7rem 1rem 0.65rem;
