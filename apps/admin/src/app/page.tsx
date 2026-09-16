@@ -44,6 +44,8 @@ export default function DashboardPage() {
   const [edit, setEdit] = useState<Content | null>(null);
   const [menuId, setMenuId] = useState<string | null>(null);
   const [editBodyHtml, setEditBodyHtml] = useState("");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const load = useCallback(async () => {
     const [cJson, sJson] = await Promise.all([
@@ -159,12 +161,55 @@ export default function DashboardPage() {
     setBusyId(id);
     try {
       await api(`/content/${id}`, { method: "DELETE" });
+      setSelected((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
       setMsg("Deleted");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Delete failed");
     } finally {
       setBusyId(null);
+    }
+  }
+
+  function toggleSelect(id: string) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSelectAll() {
+    setSelected((prev) =>
+      prev.size === contents.length ? new Set() : new Set(contents.map((c) => c.id))
+    );
+  }
+
+  async function runBulkDelete() {
+    const ids = [...selected];
+    if (ids.length === 0) return;
+    if (!confirm(`Delete ${ids.length} selected item(s) from the dashboard?`)) return;
+    setBulkBusy(true);
+    setError("");
+    setMsg("");
+    try {
+      const results = await Promise.allSettled(
+        ids.map((id) => api(`/content/${id}`, { method: "DELETE" }))
+      );
+      const failed = results.filter((r) => r.status === "rejected").length;
+      const ok = ids.length - failed;
+      setSelected(new Set());
+      setMsg(failed ? `Deleted ${ok}, failed ${failed}` : `Deleted ${ok}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Bulk delete failed");
+    } finally {
+      setBulkBusy(false);
     }
   }
 
@@ -215,6 +260,30 @@ export default function DashboardPage() {
       {msg ? <p className="msg ok">{msg}</p> : null}
       {error ? <p className="msg err">{error}</p> : null}
 
+      {contents.length > 0 ? (
+        <div className="bulk-bar">
+          <label className="bulk-check">
+            <input
+              type="checkbox"
+              checked={selected.size > 0 && selected.size === contents.length}
+              ref={(el) => {
+                if (el) el.indeterminate = selected.size > 0 && selected.size < contents.length;
+              }}
+              onChange={toggleSelectAll}
+            />
+            Select all
+          </label>
+          <button
+            type="button"
+            className="danger"
+            disabled={selected.size === 0 || bulkBusy}
+            onClick={() => runBulkDelete()}
+          >
+            {bulkBusy ? "Deleting…" : `Delete selected (${selected.size})`}
+          </button>
+        </div>
+      ) : null}
+
       <div className="list">
         {contents.length === 0 ? (
           <p className="muted">Nothing yet. Hit + to add a topic.</p>
@@ -225,6 +294,14 @@ export default function DashboardPage() {
               !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED";
             return (
               <div key={c.id} className="row">
+                <label className="row-check">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(c.id)}
+                    onChange={() => toggleSelect(c.id)}
+                    disabled={bulkBusy}
+                  />
+                </label>
                 <div className="row-main">
                   <strong>{c.title}</strong>
                   <div className="meta">
@@ -243,14 +320,14 @@ export default function DashboardPage() {
                 <div className="actions">
                   {busy ? <span className="spinner sm" /> : null}
                   {!c.wpUrl ? (
-                    <button type="button" disabled={busy} onClick={() => runGenerate(c.id)}>
+                    <button type="button" disabled={busy || bulkBusy} onClick={() => runGenerate(c.id)}>
                       {c.bodyHtml ? "Regenerate" : "Generate"}
                     </button>
                   ) : null}
                   {c.bodyHtml ? (
                     <button
                       type="button"
-                      disabled={busy}
+                      disabled={busy || bulkBusy}
                       onClick={() => {
                         setMenuId(null);
                         setPreview(c);
@@ -263,7 +340,7 @@ export default function DashboardPage() {
                     <button
                       type="button"
                       className="ghost"
-                      disabled={busy}
+                      disabled={busy || bulkBusy}
                       onClick={() => setMenuId(menuId === c.id ? null : c.id)}
                     >
                       ···

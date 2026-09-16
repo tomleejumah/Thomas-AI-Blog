@@ -217,6 +217,51 @@ textarea {
   padding: 0.9rem 0;
   border-bottom: 1px solid var(--line);
   flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.row-check {
+  display: flex;
+  align-items: center;
+  padding-top: 0.2rem;
+  flex-shrink: 0;
+}
+
+.row-check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent, #5b8def);
+  cursor: pointer;
+}
+
+.row-main {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-top: 1rem;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.bulk-check {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.bulk-check input {
+  width: 1rem;
+  height: 1rem;
+  accent-color: var(--accent, #5b8def);
 }
 
 .meta,

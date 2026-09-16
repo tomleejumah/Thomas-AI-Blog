@@ -47,6 +47,11 @@ export default function MaintenancePage() {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
+  const [keyTarget, setKeyTarget] = useState<
+    "OPENAI_API_KEY" | "GEMINI_API_KEY" | "TAVILY_API_KEY"
+  >("OPENAI_API_KEY");
+  const [keyValue, setKeyValue] = useState("");
+
   const load = useCallback(async () => {
     const data = await api<StatusPayload>("/maintenance/status");
     setStatus(data);
@@ -60,21 +65,23 @@ export default function MaintenancePage() {
     return () => clearInterval(t);
   }, [load]);
 
-  async function onSaveKeys(e: FormEvent<HTMLFormElement>) {
+  async function onSaveKey(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const value = keyValue.trim();
+    if (!value) {
+      setError("Paste the new key first.");
+      return;
+    }
     setBusy(true);
     setError("");
     setMsg("");
-    const fd = new FormData(e.currentTarget);
-    const body: Record<string, string> = {};
-    for (const k of ["OPENAI_API_KEY", "GEMINI_API_KEY", "TAVILY_API_KEY"]) {
-      const v = String(fd.get(k) ?? "").trim();
-      if (v) body[k] = v;
-    }
     try {
-      await api("/maintenance/keys", { method: "PUT", body: JSON.stringify(body) });
-      setMsg("Keys saved on server (full values never shown again).");
-      e.currentTarget.reset();
+      await api("/maintenance/keys", {
+        method: "PUT",
+        body: JSON.stringify({ [keyTarget]: value }),
+      });
+      setMsg(`${keyTarget.replace("_API_KEY", "")} updated on server. Full key is never returned.`);
+      setKeyValue("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Save failed");
@@ -130,23 +137,38 @@ export default function MaintenancePage() {
 
       <h2 className="subhead">Update keys</h2>
       <p className="muted">
-        Leave blank to keep existing. Values are stored in server <code>.env</code> only — not on Vercel.
+        API never sends full keys to the browser — only <code>••••last4</code>. Yellow fill is your browser autofill, not a fetch. Stored in server <code>.env</code> only.
       </p>
-      <form className="form surface" onSubmit={onSaveKeys}>
+      <form className="form surface" onSubmit={onSaveKey} autoComplete="off">
         <label>
-          OpenAI API key
-          <input name="OPENAI_API_KEY" type="password" placeholder="sk-… (leave blank to keep)" autoComplete="off" />
+          Key to update
+          <select
+            value={keyTarget}
+            onChange={(e) => {
+              setKeyTarget(e.target.value as typeof keyTarget);
+              setKeyValue("");
+            }}
+          >
+            <option value="OPENAI_API_KEY">OpenAI</option>
+            <option value="GEMINI_API_KEY">Gemini</option>
+            <option value="TAVILY_API_KEY">Tavily</option>
+          </select>
         </label>
         <label>
-          Gemini API key
-          <input name="GEMINI_API_KEY" type="password" placeholder="AIza… (leave blank to keep)" autoComplete="off" />
+          New key value
+          <input
+            type="password"
+            value={keyValue}
+            onChange={(e) => setKeyValue(e.target.value)}
+            placeholder="Paste key — leave empty / cancel to keep existing"
+            autoComplete="new-password"
+            name="ace_key_value"
+            data-lpignore="true"
+            data-1p-ignore="true"
+          />
         </label>
-        <label>
-          Tavily research key
-          <input name="TAVILY_API_KEY" type="password" placeholder="tvly-…" autoComplete="off" />
-        </label>
-        <button type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Save to server"}
+        <button type="submit" disabled={busy || !keyValue.trim()}>
+          {busy ? "Updating…" : "Update"}
         </button>
       </form>
       {msg ? <p className="msg ok">{msg}</p> : null}
