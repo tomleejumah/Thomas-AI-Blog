@@ -48,14 +48,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
-        <div className="sidebar-top">
-          <div className="brand">AI Content Engine</div>
-          <button type="button" className="ghost logout-btn logout-mobile" onClick={logout}>
-            Log out
-          </button>
-        </div>
-        <nav>
+      <header className="topbar">
+        <div className="brand">AI Content Engine</div>
+        <nav className="topbar-nav" aria-label="Primary">
           <Link href="/" className={pathname === "/" ? "active" : ""}>
             Dashboard
           </Link>
@@ -69,10 +64,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
             Maintenance
           </Link>
         </nav>
-        <button type="button" className="ghost logout-btn logout-desktop" onClick={logout}>
+        <button type="button" className="ghost logout-btn" onClick={logout}>
           Log out
         </button>
-      </aside>
+      </header>
       <main className="main">{children}</main>
     </div>
   );
