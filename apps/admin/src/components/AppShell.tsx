@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ReactNode, useEffect, useState } from "react";
+import { ToastHost } from "@/components/ToastHost";
 import { api, getToken, setToken } from "@/lib/api";
 
 export default function AppShell({ children }: { children: ReactNode }) {
@@ -69,6 +70,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </button>
       </header>
       <main className="main">{children}</main>
+      <ToastHost />
     </div>
   );
 }

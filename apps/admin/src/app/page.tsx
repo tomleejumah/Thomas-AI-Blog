@@ -2,7 +2,9 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import DocEditor from "@/components/DocEditor";
+import { toastErr, toastOk } from "@/components/ToastHost";
 import { api } from "@/lib/api";
+import { friendlyError } from "@/lib/errors";
 
 type Site = { id: string; name: string; baseUrl: string };
 type Content = {
@@ -67,7 +69,6 @@ function readableHtml(raw: string | null | undefined) {
 export default function DashboardPage() {
   const [contents, setContents] = useState<Content[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
-  const [error, setError] = useState("");
   const [msg, setMsg] = useState("");
   const [busyId, setBusyId] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -94,6 +95,15 @@ export default function DashboardPage() {
     | null
   >(null);
 
+  function fail(err: unknown) {
+    toastErr(friendlyError(err));
+  }
+
+  function ok(text: string) {
+    setMsg(text);
+    toastOk(text);
+  }
+
   const filtered = useMemo(
     () => contents.filter((c) => matchesFilter(c, filter)),
     [contents, filter]
@@ -109,7 +119,7 @@ export default function DashboardPage() {
   }, []);
 
   useEffect(() => {
-    load().catch((err) => setError(err instanceof Error ? err.message : "Failed"));
+    load().catch((err) => fail(err));
   }, [load]);
 
   useEffect(() => {
@@ -154,7 +164,6 @@ export default function DashboardPage() {
   async function onCreate(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setCreating(true);
-    setError("");
     setMsg("");
     const fd = new FormData(e.currentTarget);
     const payload = {
@@ -189,15 +198,15 @@ export default function DashboardPage() {
           body: JSON.stringify({ provider: "auto", brief: payload.brief }),
         });
         await finishJob();
-        setMsg(`Generated: ${content.title}`);
+        ok(`Generated: ${content.title}`);
       } else {
-        setMsg(`Idea saved: ${content.title}`);
+        ok(`Idea saved: ${content.title}`);
       }
       setShowCreate(false);
       await load();
     } catch (err) {
       setJob(null);
-      setError(err instanceof Error ? err.message : "Create failed");
+      fail(err);
     } finally {
       setBusyId(null);
       setCreating(false);
@@ -207,7 +216,6 @@ export default function DashboardPage() {
   async function runGenerate(id: string) {
     setMenuId(null);
     setBusyId(id);
-    setError("");
     setMsg("");
     startJob(id, "generate");
     try {
@@ -219,7 +227,7 @@ export default function DashboardPage() {
         body: JSON.stringify({ provider: "auto" }),
       });
       await finishJob();
-      setMsg(
+      ok(
         res.usage?.estimatedUsdLabel
           ? `Generated via ${res.provider} · ${res.usage.estimatedUsdLabel}`
           : `Generated via ${res.provider}`
@@ -227,7 +235,7 @@ export default function DashboardPage() {
       await load();
     } catch (err) {
       setJob(null);
-      setError(err instanceof Error ? err.message : "Generate failed");
+      fail(err);
     } finally {
       setBusyId(null);
     }
@@ -246,7 +254,6 @@ export default function DashboardPage() {
   async function confirmPublish(id: string) {
     setDialog(null);
     setBusyId(id);
-    setError("");
     setMsg("");
     startJob(id, "publish");
     try {
@@ -260,7 +267,7 @@ export default function DashboardPage() {
         }
       );
       await finishJob();
-      setMsg(
+      ok(
         res.content.wpUrl
           ? `Published to WordPress${res.imageError ? " (no featured image)" : ""}. Open View on the card anytime.`
           : "Published draft"
@@ -268,7 +275,7 @@ export default function DashboardPage() {
       await load();
     } catch (err) {
       setJob(null);
-      setError(err instanceof Error ? err.message : "Publish failed");
+      fail(err);
     } finally {
       setBusyId(null);
     }
@@ -288,7 +295,6 @@ export default function DashboardPage() {
   async function confirmDelete(id: string, deleteWp: boolean, linked: boolean) {
     setDialog(null);
     setBusyId(id);
-    setError("");
     setMsg("");
     try {
       const res = await api<{
@@ -318,10 +324,10 @@ export default function DashboardPage() {
           body: "To remove the WP draft, open WordPress Admin → Posts (or Trash) and delete it there.",
         });
       } else {
-        setMsg("Deleted");
+        ok("Deleted");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Delete failed");
+      fail(err);
     } finally {
       setBusyId(null);
     }
@@ -356,7 +362,6 @@ export default function DashboardPage() {
   async function confirmBulkDelete(ids: string[], deleteWp: boolean, linkedCount: number) {
     setDialog(null);
     setBulkBusy(true);
-    setError("");
     setMsg("");
     try {
       const results = await Promise.allSettled(
@@ -367,28 +372,28 @@ export default function DashboardPage() {
         )
       );
       const failed = results.filter((r) => r.status === "rejected").length;
-      const ok = ids.length - failed;
+      const deleted = ids.length - failed;
       setSelected(new Set());
       await load();
       if (failed) {
-        setMsg(`Deleted ${ok}, failed ${failed}`);
+        ok(`Deleted ${deleted}, failed ${failed}`);
       } else if (linkedCount > 0 && !deleteWp) {
         setDialog({
           kind: "notice",
           title: "Deleted from dashboard only",
-          body: `Removed ${ok} item(s) here. To remove WP drafts, open WordPress Admin → Posts (or Trash) and delete them there.`,
+          body: `Removed ${deleted} item(s) here. To remove WP drafts, open WordPress Admin → Posts (or Trash) and delete them there.`,
         });
       } else if (linkedCount > 0 && deleteWp) {
         setDialog({
           kind: "notice",
           title: "Deleted",
-          body: `Removed ${ok} item(s). Linked WordPress drafts were moved to Trash.`,
+          body: `Removed ${deleted} item(s). Linked WordPress drafts were moved to Trash.`,
         });
       } else {
-        setMsg(`Deleted ${ok}`);
+        ok(`Deleted ${deleted}`);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Bulk delete failed");
+      fail(err);
     } finally {
       setBulkBusy(false);
     }
@@ -411,10 +416,10 @@ export default function DashboardPage() {
         }),
       });
       setEdit(null);
-      setMsg("Saved");
+      ok("Saved");
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Save failed");
+      fail(err);
     } finally {
       setBusyId(null);
     }
@@ -450,7 +455,6 @@ export default function DashboardPage() {
       </div>
 
       {msg ? <p className="msg ok">{msg}</p> : null}
-      {error ? <p className="msg err">{error}</p> : null}
 
       <div className="filter-bar" role="tablist" aria-label="Filter content">
         {FILTERS.map((f) => (

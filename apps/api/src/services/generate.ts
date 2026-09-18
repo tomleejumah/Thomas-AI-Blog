@@ -1,6 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { estimateUsd } from "../lib/costs";
+import { providerHttpError } from "../lib/providerErrors";
 import { researchTopic } from "./research";
 
 export type GeneratedArticle = {
@@ -185,7 +186,7 @@ async function openaiArticle(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`OpenAI ${res.status}: ${text}`);
+    throw providerHttpError("OpenAI", res.status, text);
   }
 
   const data = (await res.json()) as {
@@ -242,7 +243,7 @@ async function geminiArticle(
     }),
   });
 
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
+  if (!res.ok) throw providerHttpError("Gemini", res.status, await res.text());
 
   const data = (await res.json()) as {
     candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
@@ -309,7 +310,7 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
         },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error(`OpenAI image ${res.status}: ${await res.text()}`);
+      if (!res.ok) throw providerHttpError("OpenAI image", res.status, await res.text());
       const data = (await res.json()) as {
         data?: Array<{ b64_json?: string; url?: string }>;
       };
@@ -356,7 +357,7 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
             },
           }),
         });
-        if (!res.ok) throw new Error(`Gemini image ${res.status}: ${await res.text()}`);
+        if (!res.ok) throw providerHttpError("Gemini image", res.status, await res.text());
         const data = (await res.json()) as {
           candidates?: Array<{
             content?: {
