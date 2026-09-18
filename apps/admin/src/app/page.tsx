@@ -221,16 +221,20 @@ export default function DashboardPage() {
     try {
       const res = await api<{
         provider: string;
+        fallbackFrom?: string | null;
         usage?: { estimatedUsdLabel?: string; inputTokens?: number; outputTokens?: number };
       }>(`/content/${id}/generate`, {
         method: "POST",
         body: JSON.stringify({ provider: "auto" }),
       });
       await finishJob();
+      const via = res.fallbackFrom
+        ? `${res.provider} (fell back after ${res.fallbackFrom} failed)`
+        : res.provider;
       ok(
         res.usage?.estimatedUsdLabel
-          ? `Generated via ${res.provider} · ${res.usage.estimatedUsdLabel}`
-          : `Generated via ${res.provider}`
+          ? `Generated via ${via} · ${res.usage.estimatedUsdLabel}`
+          : `Generated via ${via}`
       );
       await load();
     } catch (err) {

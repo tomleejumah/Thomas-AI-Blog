@@ -470,35 +470,60 @@ export async function generateForContent(
 
   let article: GeneratedArticle;
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  let fallbackFrom: string | undefined;
 
+  const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
+  const hasGemini = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+
+  const order: Array<"openai" | "gemini"> = [];
+  if (prefer === "gemini") {
+    if (hasGemini) order.push("gemini");
+    if (hasOpenAI) order.push("openai");
+  } else if (prefer === "openai") {
+    if (hasOpenAI) order.push("openai");
+    if (hasGemini) order.push("gemini");
+  } else {
+    // auto: OpenAI first, Gemini backup (and reverse if only one key exists)
+    if (hasOpenAI) order.push("openai");
+    if (hasGemini) order.push("gemini");
+  }
+
+  const providerErrors: string[] = [];
   let live: Awaited<ReturnType<typeof openaiArticle>> = null;
-  try {
-    if (prefer === "gemini") {
-      live = await geminiArticle(content.title, lang, options.brief, siteCtx, research);
-    } else if (prefer === "openai") {
-      live = await openaiArticle(content.title, lang, options.brief, siteCtx, research);
-    } else {
-      try {
-        live = await openaiArticle(content.title, lang, options.brief, siteCtx, research);
-      } catch {
-        live = null;
+
+  for (const provider of order) {
+    try {
+      live =
+        provider === "openai"
+          ? await openaiArticle(content.title, lang, options.brief, siteCtx, research)
+          : await geminiArticle(content.title, lang, options.brief, siteCtx, research);
+      if (providerErrors.length > 0) {
+        fallbackFrom = providerErrors[0]?.startsWith("OpenAI")
+          ? "openai"
+          : providerErrors[0]?.startsWith("Gemini")
+            ? "gemini"
+            : order[0];
       }
-      if (!live) live = await geminiArticle(content.title, lang, options.brief, siteCtx, research);
-    }
-  } catch (err) {
-    if (prefer === "openai") {
-      live = await geminiArticle(content.title, lang, options.brief, siteCtx, research);
-      if (!live) throw err;
-    } else {
-      throw err;
+      break;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      providerErrors.push(msg);
+      live = null;
     }
   }
 
   if (live) {
     article = live.article;
     usage = live.usage;
-  } else {
+  } else if (order.length === 0) {
     article = stubArticle(content.title, lang);
+  } else {
+    const summary = providerErrors.slice(0, 2).join(" · ");
+    throw new Error(
+      summary
+        ? `All AI providers failed. ${summary}`
+        : "All AI providers failed. Please try Generate again in a minute."
+    );
   }
 
   const updated = await prisma.contentItem.update({
@@ -537,6 +562,7 @@ export async function generateForContent(
   return {
     content: updated,
     provider: article.provider,
+    fallbackFrom: fallbackFrom || null,
     research: research
       ? { provider: research.provider, sources: research.sources.length }
       : null,
