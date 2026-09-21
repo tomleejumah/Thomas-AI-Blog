@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { estimateUsd } from "../lib/costs";
 import { providerHttpError } from "../lib/providerErrors";
+import { withRetry, fetchWithStatus } from "../lib/retry";
 import { researchTopic } from "./research";
 
 export type GeneratedArticle = {
@@ -163,31 +164,34 @@ async function openaiArticle(
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o",
-      response_format: { type: "json_object" },
-      temperature: 0.9,
-      max_tokens: 8000,
-      messages: [
-        { role: "system", content: SYSTEM_JSON },
+  const res = await withRetry(
+    () =>
+      fetchWithStatus(
+        "https://api.openai.com/v1/chat/completions",
         {
-          role: "user",
-          content: userPayload(title, language, brief, site, research),
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${key}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model: process.env.OPENAI_MODEL ?? "gpt-4o",
+            response_format: { type: "json_object" },
+            temperature: 0.9,
+            max_tokens: 8000,
+            messages: [
+              { role: "system", content: SYSTEM_JSON },
+              {
+                role: "user",
+                content: userPayload(title, language, brief, site, research),
+              },
+            ],
+          }),
         },
-      ],
-    }),
-  });
-
-  if (!res.ok) {
-    const text = await res.text();
-    throw providerHttpError("OpenAI", res.status, text);
-  }
+        (status, text) => providerHttpError("OpenAI", status, text)
+      ),
+    { attempts: 3, baseDelayMs: 1000, label: "OpenAI generateContent" }
+  );
 
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>;
@@ -218,52 +222,79 @@ async function geminiArticle(
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) return null;
 
-  const model = process.env.GEMINI_MODEL ?? "gemini-3.6-flash";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  // Try the preferred model first, then fall back to other known-good models
+  // if it's overloaded (503) or rate-limited (429). Google rotates which
+  // models are under heavy load, so a fallback list is more reliable than
+  // pinning one model.
+  const models = [
+    process.env.GEMINI_MODEL,
+    "gemini-3.6-flash",
+    "gemini-3.1-flash",
+    "gemini-2.5-flash",
+  ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [
-        {
-          role: "user",
-          parts: [
+  const modelErrors: string[] = [];
+
+  for (const model of models) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+
+    try {
+      const res = await withRetry(
+        () =>
+          fetchWithStatus(
+            url,
             {
-              text: `${SYSTEM_JSON}\n\nInput:\n${userPayload(title, language, brief, site, research)}`,
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [
+                  {
+                    role: "user",
+                    parts: [
+                      {
+                        text: `${SYSTEM_JSON}\n\nInput:\n${userPayload(title, language, brief, site, research)}`,
+                      },
+                    ],
+                  },
+                ],
+                generationConfig: {
+                  responseMimeType: "application/json",
+                  temperature: 0.9,
+                  maxOutputTokens: 8192,
+                },
+              }),
             },
-          ],
+            (status, text) => providerHttpError("Gemini", status, text)
+          ),
+        { attempts: 3, baseDelayMs: 1000, label: `Gemini generateContent (${model})` }
+      );
+
+      const data = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+      };
+      const raw = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+      if (!raw) throw new Error("Gemini returned empty content");
+      const parsed = parseArticleJson(raw);
+
+      return {
+        article: {
+          ...parsed,
+          provider: "gemini",
+          model,
         },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.9,
-        maxOutputTokens: 8192,
-      },
-    }),
-  });
+        usage: {
+          prompt_tokens: data.usageMetadata?.promptTokenCount,
+          completion_tokens: data.usageMetadata?.candidatesTokenCount,
+        },
+      };
+    } catch (err) {
+      modelErrors.push(err instanceof Error ? err.message : String(err));
+      // try next model in the fallback list
+    }
+  }
 
-  if (!res.ok) throw providerHttpError("Gemini", res.status, await res.text());
-
-  const data = (await res.json()) as {
-    candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-    usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
-  };
-  const raw = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
-  if (!raw) throw new Error("Gemini returned empty content");
-  const parsed = parseArticleJson(raw);
-
-  return {
-    article: {
-      ...parsed,
-      provider: "gemini",
-      model,
-    },
-    usage: {
-      prompt_tokens: data.usageMetadata?.promptTokenCount,
-      completion_tokens: data.usageMetadata?.candidatesTokenCount,
-    },
-  };
+  throw new Error(modelErrors.join(" | ") || "Gemini: all models failed");
 }
 
 function naturalPhotoPrompt(prompt: string) {
@@ -302,15 +333,22 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
         payload.size = "1024x1024";
       }
 
-      const res = await fetch("https://api.openai.com/v1/images/generations", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${openaiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw providerHttpError("OpenAI image", res.status, await res.text());
+      const res = await withRetry(
+        () =>
+          fetchWithStatus(
+            "https://api.openai.com/v1/images/generations",
+            {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${openaiKey}`,
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify(payload),
+            },
+            (status, text) => providerHttpError("OpenAI image", status, text)
+          ),
+        { attempts: 3, baseDelayMs: 1000, label: "OpenAI image generation" }
+      );
       const data = (await res.json()) as {
         data?: Array<{ b64_json?: string; url?: string }>;
       };
@@ -347,17 +385,24 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
     for (const model of models) {
       try {
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
-        const res = await fetch(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
-            generationConfig: {
-              responseModalities: ["TEXT", "IMAGE"],
-            },
-          }),
-        });
-        if (!res.ok) throw providerHttpError("Gemini image", res.status, await res.text());
+        const res = await withRetry(
+          () =>
+            fetchWithStatus(
+              url,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  contents: [{ role: "user", parts: [{ text: fullPrompt }] }],
+                  generationConfig: {
+                    responseModalities: ["TEXT", "IMAGE"],
+                  },
+                }),
+              },
+              (status, text) => providerHttpError("Gemini image", status, text)
+            ),
+          { attempts: 3, baseDelayMs: 1000, label: `Gemini image (${model})` }
+        );
         const data = (await res.json()) as {
           candidates?: Array<{
             content?: {
