@@ -9,6 +9,7 @@ export function friendlyError(raw: unknown): string {
         error?: { message?: string; status?: string; code?: number | string };
         message?: string;
         status?: string;
+        code?: number | string;
       };
       const inner = parsed.error ?? parsed;
       const detail = (inner.message || parsed.message || "").trim();
