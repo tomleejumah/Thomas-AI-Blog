@@ -14,7 +14,7 @@ export function friendlyError(raw: unknown): string {
       const inner = parsed.error ?? parsed;
       const detail = (inner.message || parsed.message || "").trim();
       const status = String(inner.status || parsed.status || "");
-      const code = String(inner.code ?? "");
+      const code = String(inner.code ?? parsed.code ?? "");
 
       if (
         /UNAVAILABLE/i.test(status) ||
@@ -24,7 +24,7 @@ export function friendlyError(raw: unknown): string {
         return "The AI writer is busy right now. Wait a minute, then tap Generate again.";
       }
       if (
-        /RESOURCE_EXHAUSTED|RESOURCE_EXHAUSTED/i.test(status) ||
+        /RESOURCE_EXHAUSTED/i.test(status) ||
         code === "429" ||
         /quota|rate limit|billing|insufficient/i.test(detail)
       ) {
@@ -60,10 +60,12 @@ export function providerHttpError(provider: string, status: number, bodyText: st
     const parsed = JSON.parse(bodyText) as {
       error?: { message?: string; status?: string; code?: number | string };
       message?: string;
+      status?: string;
+      code?: number | string;
     };
     const inner = parsed.error ?? parsed;
     const detail = (inner.message || parsed.message || "").trim();
-    const st = String(inner.status || "");
+    const st = String(inner.status || parsed.status || "");
     if (
       status === 503 ||
       /UNAVAILABLE/i.test(st) ||
