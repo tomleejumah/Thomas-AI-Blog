@@ -761,12 +761,72 @@ textarea {
   min-height: 320px;
   max-height: 55vh;
   overflow: auto;
-  background: #0f1419;
+  background: #ffffff;
   border: 1px solid var(--line);
-  color: var(--text);
+  color: #1f2328;
   border-radius: 8px;
   padding: 0.85rem 1rem;
   line-height: 1.55;
+}
+
+/* Edit dialog slides in from the right instead of centering */
+.modal.modal-right {
+  justify-content: flex-end;
+  padding: 0;
+}
+
+.modal.modal-right .modal-card {
+  height: 100vh;
+  max-height: 100vh;
+  width: min(720px, 100%);
+  border-radius: 0;
+  margin: 0;
+}
+
+/* Doc editor: white canvas with a proper toolbar */
+.doc-shell {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.doc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0.6rem 0.7rem;
+  background: #f3f4f6;
+  border-bottom: 1px solid #e2e4e8;
+}
+
+.doc-toolbar button {
+  background: #ffffff;
+  color: #1f2328;
+  border: 1px solid #d7dae0;
+  border-radius: 6px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  min-width: 2.1rem;
+  width: auto;
+}
+
+.doc-toolbar button:hover {
+  background: #eef1f5;
+  border-color: #b9c0cc;
+}
+
+.doc-sep {
+  width: 1px;
+  align-self: stretch;
+  background: #d7dae0;
+  margin: 0.15rem 0.25rem;
+}
+
+.doc-page {
+  background: #ffffff;
+  color: #1f2328;
 }
 
 .toast-host {

@@ -846,7 +846,7 @@ export default function DashboardPage() {
       ) : null}
 
       {edit ? (
-        <div className="modal" role="dialog">
+        <div className="modal modal-right" role="dialog">
           <form className="modal-card modal-wide form form-wide" onSubmit={saveEdit}>
             <div className="modal-head">
               <h2>Edit</h2>
