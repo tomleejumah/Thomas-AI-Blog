@@ -386,7 +386,7 @@ export default function SitesPage() {
             <p className="muted">Re-enter credentials to re-encrypt with the current key.</p>
             <label>
               WP username
-              <input name="wpUsername" required defaultValue={editSite.wpUsername as string | undefined} autoComplete="off" />
+              <input name="wpUsername" required autoComplete="off" />
             </label>
             <label>
               Application Password
