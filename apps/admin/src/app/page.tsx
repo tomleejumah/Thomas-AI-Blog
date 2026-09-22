@@ -122,17 +122,44 @@ export default function DashboardPage() {
     load().catch((err) => fail(err));
   }, [load]);
 
+  // "publish" has no backend job/progress endpoint yet, so it still uses a
+  // capped simulated ticker. "generate" gets real progress via pollGenerateJob.
   useEffect(() => {
-    if (!job) return;
+    if (!job || job.kind !== "publish") return;
     const t = setInterval(() => {
       setJob((prev) => {
-        if (!prev || prev.pct >= 92) return prev;
-        const step = prev.kind === "generate" ? 2.5 + Math.random() * 3.5 : 3 + Math.random() * 4;
-        return { ...prev, pct: Math.min(92, prev.pct + step) };
+        if (!prev || prev.kind !== "publish" || prev.pct >= 92) return prev;
+        return { ...prev, pct: Math.min(92, prev.pct + 3 + Math.random() * 4) };
       });
     }, 450);
     return () => clearInterval(t);
   }, [job?.id, job?.kind]);
+
+  // Polls the backend job status for a "generate" job and resolves with the
+  // final result once done, updating the progress bar with real pct/label
+  // from the server as it goes.
+  async function pollGenerateJob<T = unknown>(id: string): Promise<T> {
+    while (true) {
+      const status = await api<{
+        status: "running" | "done" | "error";
+        pct: number;
+        label: string;
+        result?: T;
+        error?: string;
+      }>(`/content/${id}/generate/status`);
+
+      setJob((prev) =>
+        prev && prev.kind === "generate" && prev.id === id
+          ? { ...prev, pct: status.pct, label: status.label }
+          : prev
+      );
+
+      if (status.status === "done") return status.result as T;
+      if (status.status === "error") throw new Error(status.error || "Generate failed");
+
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  }
 
   function startJob(id: string, kind: JobKind) {
     setJob({
@@ -197,6 +224,7 @@ export default function DashboardPage() {
           method: "POST",
           body: JSON.stringify({ provider: "auto", brief: payload.brief }),
         });
+        await pollGenerateJob(content.id);
         await finishJob();
         ok(`Generated: ${content.title}`);
       } else {
@@ -219,14 +247,15 @@ export default function DashboardPage() {
     setMsg("");
     startJob(id, "generate");
     try {
-      const res = await api<{
-        provider: string;
-        fallbackFrom?: string | null;
-        usage?: { estimatedUsdLabel?: string; inputTokens?: number; outputTokens?: number };
-      }>(`/content/${id}/generate`, {
+      await api(`/content/${id}/generate`, {
         method: "POST",
         body: JSON.stringify({ provider: "auto" }),
       });
+      const res = await pollGenerateJob<{
+        provider: string;
+        fallbackFrom?: string | null;
+        usage?: { estimatedUsdLabel?: string; inputTokens?: number; outputTokens?: number };
+      }>(id);
       await finishJob();
       const via = res.fallbackFrom
         ? `${res.provider} (fell back after ${res.fallbackFrom} failed)`

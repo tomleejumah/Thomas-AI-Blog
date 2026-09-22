@@ -153,13 +153,15 @@ type ResearchCtx = {
   answers: string[];
   sources: Array<{ title: string; url: string; snippet: string }>;
 };
+type OnStage = GenerateOptions["onStage"];
 
 async function openaiArticle(
   title: string,
   language: string,
   brief?: string,
   site?: SiteCtx,
-  research?: ResearchCtx | null
+  research?: ResearchCtx | null,
+  onStage?: OnStage
 ) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
@@ -190,7 +192,17 @@ async function openaiArticle(
         },
         (status, text) => providerHttpError("OpenAI", status, text)
       ),
-    { attempts: 3, baseDelayMs: 1000, label: "OpenAI generateContent" }
+    {
+      attempts: 3,
+      baseDelayMs: 1000,
+      label: "OpenAI generateContent",
+      onAttempt: (attempt, attempts) =>
+        onStage?.({
+          stage: "writing",
+          label: `Writing with OpenAI (attempt ${attempt}/${attempts})…`,
+          pct: 25 + attempt * 10,
+        }),
+    }
   );
 
   const data = (await res.json()) as {
@@ -217,7 +229,8 @@ async function geminiArticle(
   language: string,
   brief?: string,
   site?: SiteCtx,
-  research?: ResearchCtx | null
+  research?: ResearchCtx | null,
+  onStage?: OnStage
 ) {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) return null;
@@ -235,7 +248,7 @@ async function geminiArticle(
 
   const modelErrors: string[] = [];
 
-  for (const model of models) {
+  for (const [modelIdx, model] of models.entries()) {
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
 
     try {
@@ -266,7 +279,17 @@ async function geminiArticle(
             },
             (status, text) => providerHttpError("Gemini", status, text)
           ),
-        { attempts: 3, baseDelayMs: 1000, label: `Gemini generateContent (${model})` }
+        {
+          attempts: 3,
+          baseDelayMs: 1000,
+          label: `Gemini generateContent (${model})`,
+          onAttempt: (attempt, attempts) =>
+            onStage?.({
+              stage: "writing",
+              label: `Writing with Gemini ${model} (attempt ${attempt}/${attempts})…`,
+              pct: 25 + modelIdx * 15 + attempt * 5,
+            }),
+        }
       );
 
       const data = (await res.json()) as {
@@ -457,6 +480,8 @@ export async function generateForContent(
   const lang = content.language;
   const prefer = options.provider ?? "auto";
 
+  options.onStage?.({ stage: "researching", label: "Loading site context…", pct: 5 });
+
   const [facts, pages] = await Promise.all([
     prisma.businessFact.findMany({
       where: { siteId: content.siteId },
@@ -478,6 +503,8 @@ export async function generateForContent(
     businessFacts: facts.map((f) => ({ key: f.key, value: f.value })),
     linkTargets: pages.map((p) => ({ title: p.title, url: p.url })),
   };
+
+  options.onStage?.({ stage: "researching", label: "Researching topic…", pct: 10 });
 
   let research: ResearchCtx | null = null;
   let researchError: string | undefined;
@@ -513,6 +540,8 @@ export async function generateForContent(
     researchError = err instanceof Error ? err.message : String(err);
   }
 
+  options.onStage?.({ stage: "writing", label: "Starting draft…", pct: 20 });
+
   let article: GeneratedArticle;
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
   let fallbackFrom: string | undefined;
@@ -540,8 +569,22 @@ export async function generateForContent(
     try {
       live =
         provider === "openai"
-          ? await openaiArticle(content.title, lang, options.brief, siteCtx, research)
-          : await geminiArticle(content.title, lang, options.brief, siteCtx, research);
+          ? await openaiArticle(
+              content.title,
+              lang,
+              options.brief,
+              siteCtx,
+              research,
+              options.onStage
+            )
+          : await geminiArticle(
+              content.title,
+              lang,
+              options.brief,
+              siteCtx,
+              research,
+              options.onStage
+            );
       if (providerErrors.length > 0) {
         fallbackFrom = providerErrors[0]?.startsWith("OpenAI")
           ? "openai"
@@ -570,6 +613,8 @@ export async function generateForContent(
         : "All AI providers failed. Please try Generate again in a minute."
     );
   }
+
+  options.onStage?.({ stage: "saving", label: "Saving draft…", pct: 90 });
 
   const updated = await prisma.contentItem.update({
     where: { id: content.id },

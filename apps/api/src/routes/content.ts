@@ -6,6 +6,7 @@ import {
   generateForContent,
 } from "../services/generate";
 import { siteWpAuth } from "../lib/siteAuth";
+import { createJob, updateJob, finishJob, failJob, getJob } from "../lib/jobs";
 import {
   createWpCategory,
   createWpDraftPost,
@@ -192,6 +193,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  // Kicks off generation as a background job and returns immediately.
+  // The frontend polls GET /:id/generate/status for real progress instead
+  // of guessing with a fake timer.
   app.post("/:id/generate", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z
@@ -202,17 +206,30 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body ?? {});
 
-    try {
-      const result = await generateForContent(id, {
-        brief: body.brief,
-        provider: body.provider ?? "auto",
-        withImage: body.withImage,
-      });
-      return result;
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Generate failed";
-      return reply.code(400).send({ error: message });
+    const existingJob = getJob(id);
+    if (existingJob?.status === "running") {
+      return reply.code(409).send({ error: "Generation already in progress for this item" });
     }
+
+    createJob(id);
+
+    generateForContent(id, {
+      brief: body.brief,
+      provider: body.provider ?? "auto",
+      withImage: body.withImage,
+      onStage: (stage) => updateJob(id, { pct: stage.pct, label: stage.label }),
+    })
+      .then((result) => finishJob(id, result))
+      .catch((err) => failJob(id, err instanceof Error ? err.message : String(err)));
+
+    return reply.code(202).send({ jobId: id, status: "running" });
+  });
+
+  app.get("/:id/generate/status", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const job = getJob(id);
+    if (!job) return reply.code(404).send({ error: "No generation job for this item" });
+    return job;
   });
 
   app.post("/:id/approve", async (req, reply) => {

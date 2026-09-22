@@ -20,13 +20,19 @@ function sleep(ms: number) {
  */
 export async function withRetry<T>(
   fn: () => Promise<T>,
-  opts: { attempts?: number; baseDelayMs?: number; label?: string } = {}
+  opts: {
+    attempts?: number;
+    baseDelayMs?: number;
+    label?: string;
+    onAttempt?: (attempt: number, attempts: number) => void;
+  } = {}
 ): Promise<T> {
   const attempts = opts.attempts ?? 3;
   const baseDelayMs = opts.baseDelayMs ?? 1000;
   let lastErr: unknown;
 
   for (let i = 0; i < attempts; i++) {
+    opts.onAttempt?.(i + 1, attempts);
     try {
       return await fn();
     } catch (err) {
