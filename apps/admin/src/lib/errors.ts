@@ -1,6 +1,10 @@
 /** Turn provider dumps (Gemini/OpenAI JSON) into short operator-facing copy. */
+function stripHtml(s: string) {
+  return s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").trim();
+}
+
 export function friendlyError(raw: unknown): string {
-  const msg = raw instanceof Error ? raw.message : String(raw ?? "Something went wrong");
+  const msg = stripHtml(raw instanceof Error ? raw.message : String(raw ?? "Something went wrong"));
 
   const jsonMatch = msg.match(/\{[\s\S]*\}/);
   if (jsonMatch) {

@@ -114,14 +114,18 @@ export const siteRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body ?? {});
 
-    await prisma.$transaction([
-      prisma.businessFact.deleteMany({ where: { siteId: id } }),
-      ...body.facts.map((f) =>
-        prisma.businessFact.create({
-          data: { siteId: id, key: f.key.trim(), value: f.value.trim() },
-        })
-      ),
-    ]);
+    await prisma.$transaction(async (tx) => {
+      await tx.businessFact.deleteMany({ where: { siteId: id } });
+      if (body.facts.length > 0) {
+        await tx.businessFact.createMany({
+          data: body.facts.map((f) => ({
+            siteId: id,
+            key: f.key.trim(),
+            value: f.value.trim(),
+          })),
+        });
+      }
+    });
 
     const facts = await prisma.businessFact.findMany({
       where: { siteId: id },
