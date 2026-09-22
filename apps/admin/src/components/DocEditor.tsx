@@ -13,10 +13,16 @@ function run(cmd: string, value?: string) {
 
 export default function DocEditor({ html, onChange }: Props) {
   const ref = useRef<HTMLDivElement>(null);
+  const initialized = useRef(false);
 
   useEffect(() => {
-    if (ref.current) {
+    // Set the starting content once only. If this re-runs on every
+    // re-render (e.g. because `html` is recomputed inline in the parent's
+    // JSX), it overwrites the div's innerHTML mid-edit and wipes out
+    // whatever the person just typed.
+    if (ref.current && !initialized.current) {
       ref.current.innerHTML = html || "<p></p>";
+      initialized.current = true;
     }
   }, [html]);
 

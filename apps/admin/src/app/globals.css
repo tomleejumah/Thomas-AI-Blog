@@ -778,7 +778,7 @@ textarea {
 .modal.modal-right .modal-card {
   height: 100vh;
   max-height: 100vh;
-  width: min(720px, 100%);
+  width: min(1100px, 96vw);
   border-radius: 0;
   margin: 0;
 }
