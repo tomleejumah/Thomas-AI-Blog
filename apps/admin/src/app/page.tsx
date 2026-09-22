@@ -846,7 +846,7 @@ export default function DashboardPage() {
       ) : null}
 
       {edit ? (
-        <div className="modal modal-right" role="dialog">
+        <div className="modal" role="dialog">
           <form className="modal-card modal-wide form form-wide" onSubmit={saveEdit}>
             <div className="modal-head">
               <h2>Edit</h2>
@@ -870,12 +870,12 @@ export default function DashboardPage() {
               Meta description
               <textarea name="metaDescription" rows={2} defaultValue={edit.metaDescription ?? ""} />
             </label>
-            <label>
-              Article
+            <div className="field">
+              <span className="field-label">Article</span>
               <span className="field-hint">Google Docs–style edit — formatting toolbar, no raw HTML.</span>
               <DocEditor html={readableHtml(edit.bodyHtml)} onChange={setEditBodyHtml} />
               <input type="hidden" name="bodyHtml" value={editBodyHtml} readOnly />
-            </label>
+            </div>
             <button type="submit" disabled={busyId === edit.id}>
               Save
             </button>

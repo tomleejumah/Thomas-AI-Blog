@@ -137,6 +137,16 @@ label {
   color: var(--muted);
 }
 
+.field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.field-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
 input,
 textarea,
 button {
@@ -767,20 +777,6 @@ textarea {
   border-radius: 8px;
   padding: 0.85rem 1rem;
   line-height: 1.55;
-}
-
-/* Edit dialog slides in from the right instead of centering */
-.modal.modal-right {
-  justify-content: flex-end;
-  padding: 0;
-}
-
-.modal.modal-right .modal-card {
-  height: 100vh;
-  max-height: 100vh;
-  width: min(1100px, 96vw);
-  border-radius: 0;
-  margin: 0;
 }
 
 /* Doc editor: white canvas with a proper toolbar */
