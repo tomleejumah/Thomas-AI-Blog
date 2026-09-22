@@ -48,6 +48,26 @@ export const siteRoutes: FastifyPluginAsync = async (app) => {
     });
   });
 
+  app.patch("/:id/credentials", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const existing = await prisma.site.findUnique({ where: { id } });
+    if (!existing) return reply.code(404).send({ error: "Site not found" });
+    const body = z
+      .object({
+        wpUsername: z.string().min(1),
+        wpAppPassword: z.string().min(1),
+      })
+      .parse(req.body);
+    await prisma.site.update({
+      where: { id },
+      data: {
+        wpUsername: body.wpUsername,
+        wpAppPassword: encryptSecret(body.wpAppPassword),
+      },
+    });
+    return { ok: true };
+  });
+
   app.delete("/:id", async (req, reply) => {
     const { id } = req.params as { id: string };
     const existing = await prisma.site.findUnique({ where: { id } });

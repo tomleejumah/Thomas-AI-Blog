@@ -32,7 +32,14 @@ export function decryptSecret(stored: string): string {
   const data = buf.subarray(28);
   const decipher = createDecipheriv("aes-256-gcm", keyBytes(), iv);
   decipher.setAuthTag(tag);
-  return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+  try {
+    return Buffer.concat([decipher.update(data), decipher.final()]).toString("utf8");
+  } catch {
+    throw new Error(
+      "Failed to decrypt site credentials — ADMIN_SESSION_SECRET or ADMIN_PASSWORD has changed. " +
+        "Re-save the site's WP App Password in Settings to re-encrypt it with the current key."
+    );
+  }
 }
 
 export function isEncryptedSecret(stored: string) {

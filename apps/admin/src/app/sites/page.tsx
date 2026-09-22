@@ -23,6 +23,7 @@ export default function SitesPage() {
   const [factsText, setFactsText] = useState("");
   const [error, setError] = useState("");
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [editSite, setEditSite] = useState<Site | null>(null);
 
   const load = useCallback(async () => {
     const data = await api<{ sites: Site[] }>("/sites");
@@ -71,6 +72,30 @@ export default function SitesPage() {
     } catch (err) {
       setOk(false);
       setMsg(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updateCredentials(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!editSite) return;
+    setBusy(true);
+    setError("");
+    const fd = new FormData(e.currentTarget);
+    try {
+      await api(`/sites/${editSite.id}/credentials`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          wpUsername: String(fd.get("wpUsername") ?? ""),
+          wpAppPassword: String(fd.get("wpAppPassword") ?? ""),
+        }),
+      });
+      setMsg("Credentials updated. You can now rescan and publish.");
+      setOk(true);
+      setEditSite(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Update failed");
     } finally {
       setBusy(false);
     }
@@ -202,6 +227,9 @@ export default function SitesPage() {
               <div className="actions">
                 {busyId === s.id ? <span className="spinner sm" /> : null}
                 <div className="actions-quick">
+                  <button type="button" disabled={busyId === s.id} onClick={() => setEditSite(s)}>
+                    Edit
+                  </button>
                   <button type="button" disabled={busyId === s.id} onClick={() => rescan(s.id)}>
                     Rescan
                   </button>
@@ -342,6 +370,31 @@ export default function SitesPage() {
             </label>
             <button type="submit" disabled={busy}>
               {busy ? "Saving…" : "Save facts"}
+            </button>
+          </form>
+        </div>
+      ) : null}
+      {editSite ? (
+        <div className="modal" role="dialog">
+          <form className="modal-card form" onSubmit={updateCredentials}>
+            <div className="modal-head">
+              <h2>Edit credentials — {editSite.name}</h2>
+              <button type="button" className="icon-close" aria-label="Close" onClick={() => setEditSite(null)}>
+                ×
+              </button>
+            </div>
+            <p className="muted">Re-enter credentials to re-encrypt with the current key.</p>
+            <label>
+              WP username
+              <input name="wpUsername" required defaultValue={editSite.wpUsername as string | undefined} autoComplete="off" />
+            </label>
+            <label>
+              Application Password
+              <input name="wpAppPassword" required type="password" placeholder="xxxx xxxx xxxx xxxx xxxx xxxx" autoComplete="new-password" />
+            </label>
+            {error ? <p className="msg err">{error}</p> : null}
+            <button type="submit" disabled={busy}>
+              {busy ? "Saving…" : "Save credentials"}
             </button>
           </form>
         </div>
