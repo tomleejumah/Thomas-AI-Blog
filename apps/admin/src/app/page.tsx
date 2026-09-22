@@ -122,19 +122,6 @@ export default function DashboardPage() {
     load().catch((err) => fail(err));
   }, [load]);
 
-  // "publish" has no backend job/progress endpoint yet, so it still uses a
-  // capped simulated ticker. "generate" gets real progress via pollGenerateJob.
-  useEffect(() => {
-    if (!job || job.kind !== "publish") return;
-    const t = setInterval(() => {
-      setJob((prev) => {
-        if (!prev || prev.kind !== "publish" || prev.pct >= 92) return prev;
-        return { ...prev, pct: Math.min(92, prev.pct + 3 + Math.random() * 4) };
-      });
-    }, 450);
-    return () => clearInterval(t);
-  }, [job?.id, job?.kind]);
-
   // Polls the backend job status for a "generate" job and resolves with the
   // final result once done, updating the progress bar with real pct/label
   // from the server as it goes.
@@ -156,6 +143,30 @@ export default function DashboardPage() {
 
       if (status.status === "done") return status.result as T;
       if (status.status === "error") throw new Error(status.error || "Generate failed");
+
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  }
+
+  // Same as pollGenerateJob but for "publish" jobs.
+  async function pollPublishJob<T = unknown>(id: string): Promise<T> {
+    while (true) {
+      const status = await api<{
+        status: "running" | "done" | "error";
+        pct: number;
+        label: string;
+        result?: T;
+        error?: string;
+      }>(`/content/${id}/publish/status`);
+
+      setJob((prev) =>
+        prev && prev.kind === "publish" && prev.id === id
+          ? { ...prev, pct: status.pct, label: status.label }
+          : prev
+      );
+
+      if (status.status === "done") return status.result as T;
+      if (status.status === "error") throw new Error(status.error || "Publish failed");
 
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -291,14 +302,12 @@ export default function DashboardPage() {
     startJob(id, "publish");
     try {
       await api(`/content/${id}/approve`, { method: "POST", body: "{}" });
-      setJob((p) => (p ? { ...p, pct: Math.max(p.pct, 35), label: "Publishing draft…" } : p));
-      const res = await api<{ content: Content; imageError?: string }>(
-        `/content/${id}/publish`,
-        {
-          method: "POST",
-          body: JSON.stringify({ withImage: true, status: "draft" }),
-        }
-      );
+      setJob((p) => (p ? { ...p, pct: Math.max(p.pct, 10), label: "Publishing draft…" } : p));
+      await api(`/content/${id}/publish`, {
+        method: "POST",
+        body: JSON.stringify({ withImage: true, status: "draft" }),
+      });
+      const res = await pollPublishJob<{ content: Content; imageError?: string }>(id);
       await finishJob();
       ok(
         res.content.wpUrl

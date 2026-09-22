@@ -247,6 +247,10 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
     return { content: updated };
   });
 
+  // Publish also runs as a background job — featured-image generation
+  // (with its own retries/model fallback) can take well over a minute in
+  // the worst case, which used to run synchronously inside this request
+  // and get killed by the proxy/browser as a NetworkError.
   app.post("/:id/publish", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z
@@ -275,10 +279,38 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       return { content, alreadyPublished: true };
     }
 
+    const jobId = `pub:${id}`;
+    const existingJob = getJob(jobId);
+    if (existingJob?.status === "running") {
+      return reply.code(409).send({ error: "Publish already in progress for this item" });
+    }
+
+    createJob(jobId);
+
+    runPublish(content, body, (label, pct) => updateJob(jobId, { label, pct }))
+      .then((result) => finishJob(jobId, result))
+      .catch((err) => failJob(jobId, err instanceof Error ? err.message : "Publish failed"));
+
+    return reply.code(202).send({ jobId, status: "running" });
+  });
+
+  app.get("/:id/publish/status", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const job = getJob(`pub:${id}`);
+    if (!job) return reply.code(404).send({ error: "No publish job for this item" });
+    return job;
+  });
+
+  async function runPublish(
+    content: NonNullable<Awaited<ReturnType<typeof prisma.contentItem.findUnique>>> & {
+      site: NonNullable<Awaited<ReturnType<typeof prisma.site.findUnique>>>;
+      category: { wpCategoryId: number | null } | null;
+    },
+    body: { withImage?: boolean; imagePrompt?: string; status?: "draft" | "publish" },
+    onStage: (label: string, pct: number) => void
+  ) {
     const categories =
-      content.category?.wpCategoryId != null
-        ? [content.category.wpCategoryId]
-        : [];
+      content.category?.wpCategoryId != null ? [content.category.wpCategoryId] : [];
 
     const html = [
       content.bodyHtml,
@@ -289,79 +321,69 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       .filter(Boolean)
       .join("\n");
 
-    try {
-      let featuredMediaId: number | undefined;
-      let media: { id: number; source_url?: string } | undefined;
-      let imageError: string | undefined;
-      const auth = await siteWpAuth(content.site);
+    onStage("Authenticating with WordPress…", 10);
+    let featuredMediaId: number | undefined;
+    let media: { id: number; source_url?: string } | undefined;
+    let imageError: string | undefined;
+    const auth = await siteWpAuth(content.site);
 
-      if (body.withImage !== false) {
-        const prompt =
-          body.imagePrompt ??
-          `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
-        try {
-          const img = await generateFeaturedImageBytes(prompt);
-          if (img) {
-            media = await uploadWpMedia(
-              auth.baseUrl,
-              auth.username,
-              auth.appPassword,
-              {
-                bytes: img.bytes,
-                filename: `${content.slug || "featured"}-${Date.now()}.png`,
-                mime: img.mime,
-                alt: content.focusKeyword || content.title,
-                title: content.title,
-              }
-            );
-            featuredMediaId = media.id;
-            await prisma.aiUsage.create({
-              data: {
-                contentId: content.id,
-                provider: img.provider,
-                model: img.model,
-                operation: "generate_image",
-                estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
-              },
-            });
-          }
-        } catch (err) {
-          imageError = err instanceof Error ? err.message : String(err);
+    if (body.withImage !== false) {
+      const prompt =
+        body.imagePrompt ??
+        `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
+      try {
+        onStage("Generating featured image…", 25);
+        const img = await generateFeaturedImageBytes(prompt);
+        if (img) {
+          onStage("Uploading image to WordPress…", 60);
+          media = await uploadWpMedia(auth.baseUrl, auth.username, auth.appPassword, {
+            bytes: img.bytes,
+            filename: `${content.slug || "featured"}-${Date.now()}.png`,
+            mime: img.mime,
+            alt: content.focusKeyword || content.title,
+            title: content.title,
+          });
+          featuredMediaId = media.id;
+          await prisma.aiUsage.create({
+            data: {
+              contentId: content.id,
+              provider: img.provider,
+              model: img.model,
+              operation: "generate_image",
+              estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
+            },
+          });
         }
+      } catch (err) {
+        imageError = err instanceof Error ? err.message : String(err);
       }
-
-      const post = (await createWpDraftPost(
-        auth.baseUrl,
-        auth.username,
-        auth.appPassword,
-        {
-          title: content.seoTitle || content.title,
-          content: html,
-          categories,
-          status: body.status ?? "draft",
-          featuredMediaId,
-          excerpt: content.metaDescription ?? undefined,
-          seo: {
-            focusKeyword: content.focusKeyword ?? undefined,
-            seoTitle: content.seoTitle ?? undefined,
-            metaDescription: content.metaDescription ?? undefined,
-          },
-        }
-      )) as { id: number; link?: string };
-
-      const updated = await prisma.contentItem.update({
-        where: { id },
-        data: {
-          status: "PUBLISHED",
-          wpPostId: post.id,
-          wpUrl: post.link ?? null,
-        },
-      });
-
-      return { content: updated, post, media, imageError };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Publish failed";
-      return reply.code(502).send({ error: message });
     }
-  });
+
+    onStage("Creating WordPress draft…", 85);
+    const post = (await createWpDraftPost(auth.baseUrl, auth.username, auth.appPassword, {
+      title: content.seoTitle || content.title,
+      content: html,
+      categories,
+      status: body.status ?? "draft",
+      featuredMediaId,
+      excerpt: content.metaDescription ?? undefined,
+      seo: {
+        focusKeyword: content.focusKeyword ?? undefined,
+        seoTitle: content.seoTitle ?? undefined,
+        metaDescription: content.metaDescription ?? undefined,
+      },
+    })) as { id: number; link?: string };
+
+    onStage("Saving…", 95);
+    const updated = await prisma.contentItem.update({
+      where: { id: content.id },
+      data: {
+        status: "PUBLISHED",
+        wpPostId: post.id,
+        wpUrl: post.link ?? null,
+      },
+    });
+
+    return { content: updated, post, media, imageError };
+  }
 };

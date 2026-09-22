@@ -1,0 +1,57 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - 'apps/api/**'
+      - 'packages/shared/**'
+  workflow_dispatch:
+
+jobs:
+  deploy-api:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout Root Repo
+        uses: actions/checkout@v3
+
+      - name: Sync Files to Server Directory
+        run: |
+          rsync -av --delete \
+            --exclude node_modules \
+            --exclude .env \
+            --exclude .git \
+            "$GITHUB_WORKSPACE/" /home/server/Apis/thomas-ai-blog/
+
+      - name: Install Dependencies & Build
+        run: |
+          cd /home/server/Apis/thomas-ai-blog/
+          rm -rf node_modules package-lock.json
+          npm install
+
+          # Generate Prisma Client (Required because apps/api has prisma/)
+          npm run build --workspace=packages/shared --if-present
+          npx prisma generate --schema=apps/api/prisma/schema.prisma || true
+
+          # Build API package
+          npm run build --workspace=apps/api
+
+      - name: Verify Dependencies
+        run: |
+          cd /home/server/Apis/thomas-ai-blog/
+          ls -la node_modules/pg || echo "ERROR: pg module not found"
+
+      - name: Deploy with PM2
+        run: |
+          cd /home/server/Apis/thomas-ai-blog/
+
+          # Restart using existing ecosystem config if present, or fallback to start.
+          # No --interpreter here: PM2 just uses whatever "node" is in PATH,
+          # so this never breaks again when Node gets upgraded on the server.
+          /usr/local/bin/pm2 reload ecosystem.config.cjs --only ace-api || \
+          /usr/local/bin/pm2 start apps/api/dist/index.js \
+            --name ace-api \
+            --cwd /home/server/Apis/thomas-ai-blog/apps/api \
+            --update-env
+
+          /usr/local/bin/pm2 save
