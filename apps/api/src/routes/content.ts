@@ -12,7 +12,10 @@ import {
   createWpDraftPost,
   deleteWpPost,
   uploadWpMedia,
+  verifyRankMathMeta,
 } from "../services/wordpress";
+import { localizeContent } from "../services/localize";
+import { proposeOptimization } from "../services/optimize";
 
 export const contentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/", async (req) => {
@@ -134,6 +137,18 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
     const existing = await prisma.contentItem.findUnique({ where: { id } });
     if (!existing) return reply.code(404).send({ error: "Not found" });
 
+    if (existing.bodyHtml && (body.bodyHtml || body.title)) {
+      await prisma.contentVersion.create({
+        data: {
+          contentId: id,
+          title: existing.title,
+          bodyHtml: existing.bodyHtml,
+          seoTitle: existing.seoTitle,
+          metaDescription: existing.metaDescription,
+        },
+      });
+    }
+
     const content = await prisma.contentItem.update({
       where: { id },
       data: {
@@ -147,6 +162,16 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     return { content };
+  });
+
+  // GET /content/:id/versions — history for the before/after review UI
+  app.get("/:id/versions", async (req) => {
+    const { id } = req.params as { id: string };
+    const versions = await prisma.contentVersion.findMany({
+      where: { contentId: id },
+      orderBy: { createdAt: "desc" },
+    });
+    return { versions };
   });
 
   app.delete("/:id", async (req, reply) => {
@@ -206,18 +231,20 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body ?? {});
 
-    const existingJob = getJob(id);
+    const existingJob = await getJob(id);
     if (existingJob?.status === "running") {
       return reply.code(409).send({ error: "Generation already in progress for this item" });
     }
 
-    createJob(id);
+    await createJob(id, "generate", id);
 
     generateForContent(id, {
       brief: body.brief,
       provider: body.provider ?? "auto",
       withImage: body.withImage,
-      onStage: (stage) => updateJob(id, { pct: stage.pct, label: stage.label }),
+      onStage: (stage) => {
+        void updateJob(id, { pct: stage.pct, label: stage.label });
+      },
     })
       .then((result) => finishJob(id, result))
       .catch((err) => failJob(id, err instanceof Error ? err.message : String(err)));
@@ -227,7 +254,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/:id/generate/status", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const job = getJob(id);
+    const job = await getJob(id);
     if (!job) return reply.code(404).send({ error: "No generation job for this item" });
     return job;
   });
@@ -247,10 +274,30 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
     return { content: updated };
   });
 
-  // Publish also runs as a background job — featured-image generation
-  // (with its own retries/model fallback) can take well over a minute in
-  // the worst case, which used to run synchronously inside this request
-  // and get killed by the proxy/browser as a NetworkError.
+  app.post("/:id/reject", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ note: z.string().optional() }).parse(req.body ?? {});
+    const content = await prisma.contentItem.findUnique({ where: { id } });
+    if (!content) return reply.code(404).send({ error: "Not found" });
+    const updated = await prisma.contentItem.update({
+      where: { id },
+      data: { status: "REJECTED", reviewNote: body.note ?? null },
+    });
+    return { content: updated };
+  });
+
+  app.post("/:id/request-changes", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z.object({ note: z.string().min(1) }).parse(req.body ?? {});
+    const content = await prisma.contentItem.findUnique({ where: { id } });
+    if (!content) return reply.code(404).send({ error: "Not found" });
+    const updated = await prisma.contentItem.update({
+      where: { id },
+      data: { status: "NEEDS_REVISION", reviewNote: body.note },
+    });
+    return { content: updated };
+  });
+
   app.post("/:id/publish", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z
@@ -279,38 +326,10 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       return { content, alreadyPublished: true };
     }
 
-    const jobId = `pub:${id}`;
-    const existingJob = getJob(jobId);
-    if (existingJob?.status === "running") {
-      return reply.code(409).send({ error: "Publish already in progress for this item" });
-    }
-
-    createJob(jobId);
-
-    runPublish(content, body, (label, pct) => updateJob(jobId, { label, pct }))
-      .then((result) => finishJob(jobId, result))
-      .catch((err) => failJob(jobId, err instanceof Error ? err.message : "Publish failed"));
-
-    return reply.code(202).send({ jobId, status: "running" });
-  });
-
-  app.get("/:id/publish/status", async (req, reply) => {
-    const { id } = req.params as { id: string };
-    const job = getJob(`pub:${id}`);
-    if (!job) return reply.code(404).send({ error: "No publish job for this item" });
-    return job;
-  });
-
-  async function runPublish(
-    content: NonNullable<Awaited<ReturnType<typeof prisma.contentItem.findUnique>>> & {
-      site: NonNullable<Awaited<ReturnType<typeof prisma.site.findUnique>>>;
-      category: { wpCategoryId: number | null } | null;
-    },
-    body: { withImage?: boolean; imagePrompt?: string; status?: "draft" | "publish" },
-    onStage: (label: string, pct: number) => void
-  ) {
     const categories =
-      content.category?.wpCategoryId != null ? [content.category.wpCategoryId] : [];
+      content.category?.wpCategoryId != null
+        ? [content.category.wpCategoryId]
+        : [];
 
     const html = [
       content.bodyHtml,
@@ -321,69 +340,125 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       .filter(Boolean)
       .join("\n");
 
-    onStage("Authenticating with WordPress…", 10);
-    let featuredMediaId: number | undefined;
-    let media: { id: number; source_url?: string } | undefined;
-    let imageError: string | undefined;
-    const auth = await siteWpAuth(content.site);
+    try {
+      let featuredMediaId: number | undefined;
+      let media: { id: number; source_url?: string } | undefined;
+      let imageError: string | undefined;
+      const auth = await siteWpAuth(content.site);
 
-    if (body.withImage !== false) {
-      const prompt =
-        body.imagePrompt ??
-        `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
-      try {
-        onStage("Generating featured image…", 25);
-        const img = await generateFeaturedImageBytes(prompt);
-        if (img) {
-          onStage("Uploading image to WordPress…", 60);
-          media = await uploadWpMedia(auth.baseUrl, auth.username, auth.appPassword, {
-            bytes: img.bytes,
-            filename: `${content.slug || "featured"}-${Date.now()}.png`,
-            mime: img.mime,
-            alt: content.focusKeyword || content.title,
-            title: content.title,
-          });
-          featuredMediaId = media.id;
-          await prisma.aiUsage.create({
-            data: {
-              contentId: content.id,
-              provider: img.provider,
-              model: img.model,
-              operation: "generate_image",
-              estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
-            },
-          });
+      if (body.withImage !== false) {
+        const prompt =
+          body.imagePrompt ??
+          `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
+        try {
+          const img = await generateFeaturedImageBytes(prompt);
+          if (img) {
+            media = await uploadWpMedia(
+              auth.baseUrl,
+              auth.username,
+              auth.appPassword,
+              {
+                bytes: img.bytes,
+                filename: `${content.slug || "featured"}-${Date.now()}.png`,
+                mime: img.mime,
+                alt: content.focusKeyword || content.title,
+                title: content.title,
+              }
+            );
+            featuredMediaId = media.id;
+            await prisma.aiUsage.create({
+              data: {
+                contentId: content.id,
+                provider: img.provider,
+                model: img.model,
+                operation: "generate_image",
+                estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
+              },
+            });
+          }
+        } catch (err) {
+          imageError = err instanceof Error ? err.message : String(err);
         }
-      } catch (err) {
-        imageError = err instanceof Error ? err.message : String(err);
       }
+
+      const post = (await createWpDraftPost(
+        auth.baseUrl,
+        auth.username,
+        auth.appPassword,
+        {
+          title: content.seoTitle || content.title,
+          content: html,
+          categories,
+          status: body.status ?? "draft",
+          featuredMediaId,
+          excerpt: content.metaDescription ?? undefined,
+          seo: {
+            focusKeyword: content.focusKeyword ?? undefined,
+            seoTitle: content.seoTitle ?? undefined,
+            metaDescription: content.metaDescription ?? undefined,
+          },
+        }
+      )) as { id: number; link?: string };
+
+      const updated = await prisma.contentItem.update({
+        where: { id },
+        data: {
+          status: "PUBLISHED",
+          wpPostId: post.id,
+          wpUrl: post.link ?? null,
+        },
+      });
+
+      let rankMath: { verified: boolean; mismatches: string[] } | null = null;
+      try {
+        rankMath = await verifyRankMathMeta(auth.baseUrl, auth.username, auth.appPassword, post.id, {
+          focusKeyword: content.focusKeyword ?? undefined,
+          seoTitle: content.seoTitle ?? undefined,
+          metaDescription: content.metaDescription ?? undefined,
+        });
+        await prisma.contentItem.update({
+          where: { id },
+          data: { rankMathVerified: rankMath.verified, rankMathMismatches: rankMath.mismatches },
+        });
+      } catch {
+        // Rank Math meta keys likely not registered for REST on this WP —
+        // see TASKS.md #5 note re: mu-plugin snippet.
+      }
+
+      return { content: updated, post, media, imageError, rankMath };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Publish failed";
+      return reply.code(502).send({ error: message });
     }
+  });
 
-    onStage("Creating WordPress draft…", 85);
-    const post = (await createWpDraftPost(auth.baseUrl, auth.username, auth.appPassword, {
-      title: content.seoTitle || content.title,
-      content: html,
-      categories,
-      status: body.status ?? "draft",
-      featuredMediaId,
-      excerpt: content.metaDescription ?? undefined,
-      seo: {
-        focusKeyword: content.focusKeyword ?? undefined,
-        seoTitle: content.seoTitle ?? undefined,
-        metaDescription: content.metaDescription ?? undefined,
-      },
-    })) as { id: number; link?: string };
+  // POST /content/:id/localize  { languages: ["pt","fr"] }
+  app.post("/:id/localize", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = z
+      .object({ languages: z.array(z.enum(["pt", "fr"])).min(1) })
+      .parse(req.body);
 
-    onStage("Saving…", 95);
-    const updated = await prisma.contentItem.update({
-      where: { id: content.id },
-      data: {
-        status: "PUBLISHED",
-        wpPostId: post.id,
-        wpUrl: post.link ?? null,
-      },
-    });
+    try {
+      const children = await localizeContent(id, body.languages);
+      return { children };
+    } catch (err) {
+      return reply.code(502).send({
+        error: err instanceof Error ? err.message : "Localization failed",
+      });
+    }
+  });
 
-    return { content: updated, post, media, imageError };
-  }
+  // POST /content/:id/optimize — analyze live WP page, propose an update as NEEDS_REVISION
+  app.post("/:id/optimize", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+      const result = await proposeOptimization(id);
+      return result;
+    } catch (err) {
+      return reply.code(502).send({
+        error: err instanceof Error ? err.message : "Optimization failed",
+      });
+    }
+  });
 };

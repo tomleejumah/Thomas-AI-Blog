@@ -4,6 +4,7 @@ import { estimateUsd } from "../lib/costs";
 import { providerHttpError } from "../lib/providerErrors";
 import { withRetry, fetchWithStatus } from "../lib/retry";
 import { researchTopic } from "./research";
+import { rankLinkTargets, recordAppliedLinks } from "./linking";
 
 export type GeneratedArticle = {
   title: string;
@@ -482,18 +483,18 @@ export async function generateForContent(
 
   options.onStage?.({ stage: "researching", label: "Loading site context…", pct: 5 });
 
-  const [facts, pages] = await Promise.all([
+  const [facts, rankedLinks] = await Promise.all([
     prisma.businessFact.findMany({
       where: { siteId: content.siteId },
       orderBy: { key: "asc" },
       take: 40,
     }),
-    prisma.sitePage.findMany({
-      where: { siteId: content.siteId },
-      orderBy: { updatedAt: "desc" },
-      take: 30,
-      select: { title: true, url: true },
-    }),
+    rankLinkTargets(
+      content.siteId,
+      content.title,
+      content.focusKeyword ? [content.focusKeyword] : [],
+      { limit: 15, excludeContentId: content.id }
+    ),
   ]);
 
   const siteCtx: SiteCtx = {
@@ -501,7 +502,7 @@ export async function generateForContent(
     baseUrl: content.site.baseUrl,
     category: content.category?.name ?? null,
     businessFacts: facts.map((f) => ({ key: f.key, value: f.value })),
-    linkTargets: pages.map((p) => ({ title: p.title, url: p.url })),
+    linkTargets: rankedLinks.map((p) => ({ title: p.title, url: p.url })),
   };
 
   options.onStage?.({ stage: "researching", label: "Researching topic…", pct: 10 });
@@ -628,6 +629,10 @@ export async function generateForContent(
       status: "HUMAN_REVIEW",
     },
   });
+
+  if (article.bodyHtml) {
+    await recordAppliedLinks(content.siteId, "content", content.id, article.bodyHtml);
+  }
 
   const estimatedUsd = estimateUsd({
     provider: article.provider,

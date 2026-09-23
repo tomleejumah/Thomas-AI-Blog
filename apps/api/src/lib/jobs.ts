@@ -1,12 +1,11 @@
 /**
- * Minimal in-memory job store for reporting real generation progress.
- * Keyed by contentId (one active generate job per content item at a time).
- * NOTE: assumes a single API process (see ecosystem.config.cjs — no PM2 cluster
- * mode). If you ever run multiple instances, move this to Redis/DB.
+ * DB-backed job store (Prisma `Job` table) — replaces the old in-memory
+ * Map so progress survives restarts and works across multiple API
+ * instances/processes. Same function names/shape as before; now async.
  */
+import { prisma } from "./prisma";
 
 export type JobStatus = "running" | "done" | "error";
-
 export type Job = {
   id: string;
   status: JobStatus;
@@ -17,40 +16,68 @@ export type Job = {
   updatedAt: number;
 };
 
-const jobs = new Map<string, Job>();
+const DB_TO_STATUS: Record<string, JobStatus> = {
+  QUEUED: "running",
+  PROCESSING: "running",
+  COMPLETED: "done",
+  FAILED: "error",
+};
 
-export function createJob(id: string): Job {
-  const job: Job = { id, status: "running", pct: 2, label: "Starting…", updatedAt: Date.now() };
-  jobs.set(id, job);
-  return job;
+function toJob(row: {
+  id: string;
+  status: string;
+  pct: number;
+  label: string | null;
+  result: unknown;
+  error: string | null;
+  updatedAt: Date;
+}): Job {
+  return {
+    id: row.id,
+    status: DB_TO_STATUS[row.status] ?? "running",
+    pct: row.pct,
+    label: row.label ?? "",
+    result: row.result ?? undefined,
+    error: row.error ?? undefined,
+    updatedAt: row.updatedAt.getTime(),
+  };
 }
 
-export function updateJob(id: string, patch: Partial<Pick<Job, "pct" | "label">>) {
-  const job = jobs.get(id);
-  if (!job || job.status !== "running") return;
-  if (patch.pct !== undefined) job.pct = Math.max(job.pct, Math.min(99, patch.pct));
-  if (patch.label !== undefined) job.label = patch.label;
-  job.updatedAt = Date.now();
+export async function createJob(id: string, type = "generate", contentId?: string): Promise<Job> {
+  const row = await prisma.job.upsert({
+    where: { id },
+    create: { id, type, contentId, status: "PROCESSING", pct: 2, label: "Starting…" },
+    update: { status: "PROCESSING", pct: 2, label: "Starting…", error: null, result: undefined },
+  });
+  return toJob(row);
 }
 
-export function finishJob(id: string, result: unknown) {
-  const job = jobs.get(id);
-  if (!job) return;
-  job.status = "done";
-  job.pct = 100;
-  job.label = "Done";
-  job.result = result;
-  job.updatedAt = Date.now();
+export async function updateJob(id: string, patch: { pct?: number; label?: string }) {
+  try {
+    await prisma.job.update({
+      where: { id },
+      data: {
+        ...(patch.pct !== undefined ? { pct: Math.max(0, Math.min(99, patch.pct)) } : {}),
+        ...(patch.label !== undefined ? { label: patch.label } : {}),
+      },
+    });
+  } catch {
+    // job may not exist yet if called out of order — non-fatal
+  }
 }
 
-export function failJob(id: string, error: string) {
-  const job = jobs.get(id);
-  if (!job) return;
-  job.status = "error";
-  job.error = error;
-  job.updatedAt = Date.now();
+export async function finishJob(id: string, result: unknown) {
+  await prisma.job.update({
+    where: { id },
+    data: { status: "COMPLETED", pct: 100, label: "Done", result: result as object },
+  });
 }
 
-export function getJob(id: string): Job | undefined {
-  return jobs.get(id);
+export async function failJob(id: string, error: string) {
+  await prisma.job.update({ where: { id }, data: { status: "FAILED", error } });
+}
+
+export async function getJob(id: string): Promise<Job | undefined> {
+  const row = await prisma.job.findUnique({ where: { id } });
+  return row ? toJob(row) : undefined;
 }

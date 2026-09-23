@@ -14,6 +14,8 @@ enum ContentStatus {
   AI_GENERATED
   HUMAN_REVIEW
   APPROVED
+  REJECTED
+  NEEDS_REVISION
   PUBLISHED
   UPDATED
 }
@@ -46,6 +48,9 @@ model Site {
   contents   ContentItem[]
   knowledge  BusinessFact[]
   jobs       Job[]
+  clusters   TopicCluster[]
+  topics     TopicIdea[]
+  pageLinks  PageLink[]
 }
 
 model Category {
@@ -66,15 +71,17 @@ model Category {
 }
 
 model SitePage {
-  id        String   @id @default(cuid())
-  siteId    String
-  wpPostId  Int?
-  title     String
-  url       String
-  summary   String?
-  pageType  String   @default("page")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String    @id @default(cuid())
+  siteId        String
+  wpPostId      Int?
+  title         String
+  url           String
+  summary       String?
+  pageType      String    @default("page")
+  isOrphan      Boolean   @default(true)
+  lastScannedAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
 
@@ -109,6 +116,9 @@ model ContentItem {
   schemaJson      Json?
   wpPostId        Int?
   wpUrl           String?
+  rankMathVerified Boolean?
+  reviewNote      String?
+  rankMathMismatches String[]
   parentContentId String?
   createdAt       DateTime        @default(now())
   updatedAt       DateTime        @updatedAt
@@ -119,6 +129,7 @@ model ContentItem {
   children ContentItem[] @relation("Translations")
   usages   AiUsage[]
   jobs     Job[]
+  versions ContentVersion[]
 
   @@index([siteId, status])
 }
@@ -129,8 +140,11 @@ model Job {
   contentId String?
   type      String
   status    JobStatus @default(QUEUED)
+  pct       Int       @default(0)
+  label     String?
   error     String?
   payload   Json?
+  result    Json?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
@@ -138,6 +152,74 @@ model Job {
   content ContentItem? @relation(fields: [contentId], references: [id], onDelete: SetNull)
 
   @@index([status])
+}
+
+enum TopicStatus {
+  PROPOSED
+  APPROVED
+  REJECTED
+}
+
+model TopicCluster {
+  id         String   @id @default(cuid())
+  siteId     String
+  name       String
+  instruction String
+  createdAt  DateTime @default(now())
+
+  site   Site        @relation(fields: [siteId], references: [id], onDelete: Cascade)
+  topics TopicIdea[]
+}
+
+model TopicIdea {
+  id              String      @id @default(cuid())
+  clusterId       String
+  siteId          String
+  title           String
+  primaryKeyword  String
+  secondaryKeywords String[]
+  searchIntent    String?
+  status          TopicStatus @default(PROPOSED)
+  isUpdateToPage  Boolean     @default(false)
+  relatedPageId   String?
+  cannibalizes    String[]
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  cluster TopicCluster @relation(fields: [clusterId], references: [id], onDelete: Cascade)
+  site    Site         @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, status])
+}
+
+model PageLink {
+  id         String   @id @default(cuid())
+  siteId     String
+  sourceType String // "content" | "page"
+  sourceId   String
+  targetUrl  String
+  targetTitle String?
+  anchorText String?
+  score      Float?
+  createdAt  DateTime @default(now())
+
+  site Site @relation(fields: [siteId], references: [id], onDelete: Cascade)
+
+  @@index([siteId, sourceId])
+}
+
+model ContentVersion {
+  id              String   @id @default(cuid())
+  contentId       String
+  title           String
+  bodyHtml        String?
+  seoTitle        String?
+  metaDescription String?
+  createdAt       DateTime @default(now())
+
+  content ContentItem @relation(fields: [contentId], references: [id], onDelete: Cascade)
+
+  @@index([contentId])
 }
 
 model AiUsage {
