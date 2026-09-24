@@ -19,11 +19,29 @@ type Content = {
   focusKeyword?: string | null;
   wpPostId?: number | null;
   wpUrl?: string | null;
+  slug?: string | null;
+  schemaJson?: unknown;
+  rankMathVerified?: boolean | null;
+  rankMathMismatches?: string[];
+  parentContentId?: string | null;
   site?: { id: string; name: string };
 };
 
+function extractLinks(html?: string | null) {
+  if (!html) return [] as Array<{ href: string; text: string }>;
+  return [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)].map((m) => ({
+    href: m[1],
+    text: m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() || m[1],
+  }));
+}
+
+function hasSchema(schema: unknown) {
+  if (!schema || typeof schema !== "object") return false;
+  return Object.keys(schema as object).length > 0;
+}
+
 type Filter = "all" | "idea" | "generated" | "review" | "published";
-type JobKind = "generate" | "publish";
+type JobKind = "generate" | "publish" | "localize";
 type JobProgress = { id: string; kind: JobKind; pct: number; label: string };
 
 const FILTERS: { id: Filter; label: string }[] = [
@@ -167,7 +185,12 @@ export default function DashboardPage() {
       id,
       kind,
       pct: 5,
-      label: kind === "generate" ? "Generating…" : "Checking image keys…",
+      label:
+        kind === "generate"
+          ? "Generating…"
+          : kind === "publish"
+            ? "Checking image keys…"
+            : "Translating…",
     });
   }
 
@@ -266,6 +289,27 @@ export default function DashboardPage() {
           ? `Generated via ${via} · ${res.usage.estimatedUsdLabel}`
           : `Generated via ${via}`
       );
+      await load();
+    } catch (err) {
+      setJob(null);
+      fail(err);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function runLocalize(id: string) {
+    setMenuId(null);
+    setBusyId(id);
+    startJob(id, "localize");
+    try {
+      const res = await api<{ children: Array<{ id: string; language: string; title: string }> }>(
+        `/content/${id}/localize`,
+        { method: "POST", body: JSON.stringify({ languages: ["pt", "fr"] }) }
+      );
+      await finishJob();
+      const langs = (res.children ?? []).map((c) => c.language.toUpperCase()).join(", ");
+      ok(langs ? `Translations ready: ${langs}. Open each card to preview, then send to WordPress.` : "Translations saved");
       await load();
     } catch (err) {
       setJob(null);
@@ -701,6 +745,14 @@ export default function DashboardPage() {
                         <button type="button" onClick={() => openEdit(c)}>
                           Edit
                         </button>
+                        {c.bodyHtml && !c.parentContentId && c.language === "en" ? (
+                          <button
+                            type="button"
+                            onClick={() => runLocalize(c.id)}
+                          >
+                            Translate PT + FR
+                          </button>
+                        ) : null}
                         {canPublish ? (
                           <button type="button" onClick={() => runApprovePublish(c.id)}>
                             Approve &amp; publish draft
@@ -857,6 +909,60 @@ export default function DashboardPage() {
                   ×
                 </button>
               </div>
+            </div>
+            <div className="seo-panel">
+              <h3>What this draft includes</h3>
+              <p>
+                <strong>SEO title</strong> — {preview.seoTitle || "—"}
+              </p>
+              <p>
+                <strong>Focus keyword</strong> — {preview.focusKeyword || "—"}
+              </p>
+              <p>
+                <strong>Meta description</strong> — {preview.metaDescription || "—"}
+              </p>
+              <p>
+                <strong>Slug</strong> — {preview.slug || "—"}
+              </p>
+              <p>
+                <strong>Structured data</strong> —{" "}
+                {hasSchema(preview.schemaJson)
+                  ? "BlogPosting schema is on this draft and goes into the WordPress HTML."
+                  : "Not generated yet."}
+              </p>
+              <div>
+                <strong>Links</strong>
+                {extractLinks(preview.bodyHtml).length === 0 ? (
+                  <p>None in the body yet.</p>
+                ) : (
+                  <ul>
+                    {extractLinks(preview.bodyHtml).map((l) => (
+                      <li key={l.href + l.text}>
+                        <a href={l.href} target="_blank" rel="noreferrer">
+                          {l.text}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+              <p>
+                <strong>Rank Math</strong> — the fields above are what we send to Rank Math. The 0–100 score only
+                appears in the WordPress editor on the draft, before Publish.
+                {preview.rankMathVerified === true
+                  ? " Fields were confirmed on WordPress after the last send."
+                  : preview.rankMathVerified === false
+                    ? ` Mismatch: ${(preview.rankMathMismatches ?? []).join(", ") || "check WP editor"}.`
+                    : ""}
+              </p>
+              <p>
+                <strong>Image</strong> — featured image is created on Approve &amp; publish draft (needs image credit).
+                Check the WordPress draft’s featured image.
+              </p>
+              <p>
+                <strong>Translations</strong> — English masters: use Translate PT + FR on the card. Each language is
+                its own item to preview and send to WordPress.
+              </p>
             </div>
             <div
               className="preview-html"
