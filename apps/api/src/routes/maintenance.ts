@@ -4,6 +4,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { estimateUsd, formatUsd } from "../lib/costs";
+import { probeImageCapability } from "../lib/imageCapability";
 
 const ENV_PATH = path.resolve(__dirname, "../../../../.env");
 const AUDIT_PATH = path.resolve(__dirname, "../../../../logs/key-audit.log");
@@ -103,12 +104,22 @@ async function probeGemini() {
 
 export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
   app.get("/status", async () => {
-    const [openai, gemini] = await Promise.all([probeOpenAI(), probeGemini()]);
+    const [openai, gemini, images] = await Promise.all([
+      probeOpenAI(),
+      probeGemini(),
+      probeImageCapability(),
+    ]);
     return {
       api: { status: "up" as const, detail: "ace-api responding" },
       providers: {
-        openai,
-        gemini,
+        openai: {
+          ...openai,
+          detail: `${openai.detail} · images: ${images.openai.ok ? images.openai.models.slice(0, 2).join(", ") || "yes" : images.openai.detail}`,
+        },
+        gemini: {
+          ...gemini,
+          detail: `${gemini.detail} · images: ${images.gemini.ok ? images.gemini.models.slice(0, 2).join(", ") || "yes" : images.gemini.detail}`,
+        },
         tavily: process.env.TAVILY_API_KEY
           ? await (async () => {
               try {

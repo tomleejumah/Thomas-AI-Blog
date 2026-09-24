@@ -8,6 +8,7 @@ import { prisma } from "./prisma";
 export type JobStatus = "running" | "done" | "error";
 export type Job = {
   id: string;
+  type: string;
   status: JobStatus;
   pct: number;
   label: string;
@@ -25,6 +26,7 @@ const DB_TO_STATUS: Record<string, JobStatus> = {
 
 function toJob(row: {
   id: string;
+  type: string;
   status: string;
   pct: number;
   label: string | null;
@@ -34,6 +36,7 @@ function toJob(row: {
 }): Job {
   return {
     id: row.id,
+    type: row.type,
     status: DB_TO_STATUS[row.status] ?? "running",
     pct: row.pct,
     label: row.label ?? "",
@@ -47,7 +50,14 @@ export async function createJob(id: string, type = "generate", contentId?: strin
   const row = await prisma.job.upsert({
     where: { id },
     create: { id, type, contentId, status: "PROCESSING", pct: 2, label: "Starting…" },
-    update: { status: "PROCESSING", pct: 2, label: "Starting…", error: null, result: undefined },
+    update: {
+      type,
+      status: "PROCESSING",
+      pct: 2,
+      label: "Starting…",
+      error: null,
+      result: undefined,
+    },
   });
   return toJob(row);
 }

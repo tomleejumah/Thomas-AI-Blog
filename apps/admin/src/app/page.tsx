@@ -125,7 +125,11 @@ export default function DashboardPage() {
   // Polls the backend job status for a "generate" job and resolves with the
   // final result once done, updating the progress bar with real pct/label
   // from the server as it goes.
-  async function pollGenerateJob<T = unknown>(id: string): Promise<T> {
+  async function pollJob<T = unknown>(
+    id: string,
+    kind: JobKind,
+    path: "generate" | "publish"
+  ): Promise<T> {
     while (true) {
       const status = await api<{
         status: "running" | "done" | "error";
@@ -133,16 +137,22 @@ export default function DashboardPage() {
         label: string;
         result?: T;
         error?: string;
-      }>(`/content/${id}/generate/status`);
+      }>(`/content/${id}/${path}/status`).catch((err: unknown) => {
+        const m = err instanceof Error ? err.message : String(err);
+        if (/no (publish|generation) job/i.test(m)) {
+          return { status: "running" as const, pct: 8, label: "", result: undefined, error: undefined };
+        }
+        throw err;
+      });
 
       setJob((prev) =>
-        prev && prev.kind === "generate" && prev.id === id
-          ? { ...prev, pct: status.pct, label: status.label }
+        prev && prev.kind === kind && prev.id === id
+          ? { ...prev, pct: status.pct, label: status.label || prev.label }
           : prev
       );
 
-      if (status.status === "done") return status.result as T;
-      if (status.status === "error") throw new Error(status.error || "Generate failed");
+      if (status.status === "done") return (status.result ?? {}) as T;
+      if (status.status === "error") throw new Error(status.error || `${path} failed`);
 
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -153,7 +163,7 @@ export default function DashboardPage() {
       id,
       kind,
       pct: 5,
-      label: kind === "generate" ? "Generating…" : "Deploying to WordPress…",
+      label: kind === "generate" ? "Generating…" : "Checking image keys…",
     });
   }
 
@@ -211,7 +221,7 @@ export default function DashboardPage() {
           method: "POST",
           body: JSON.stringify({ provider: "auto", brief: payload.brief }),
         });
-        await pollGenerateJob(content.id);
+        await pollJob(content.id, "generate", "generate");
         await finishJob();
         ok(`Generated: ${content.title}`);
       } else {
@@ -238,11 +248,11 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify({ provider: "auto" }),
       });
-      const res = await pollGenerateJob<{
+      const res = await pollJob<{
         provider: string;
         fallbackFrom?: string | null;
         usage?: { estimatedUsdLabel?: string; inputTokens?: number; outputTokens?: number };
-      }>(id);
+      }>(id, "generate", "generate");
       await finishJob();
       const via = res.fallbackFrom
         ? `${res.provider} (fell back after ${res.fallbackFrom} failed)`
@@ -278,17 +288,39 @@ export default function DashboardPage() {
     startJob(id, "publish");
     try {
       await api(`/content/${id}/approve`, { method: "POST", body: "{}" });
-      setJob((p) => (p ? { ...p, pct: Math.max(p.pct, 10), label: "Publishing draft…" } : p));
-      const res = await api<{ content: Content; imageError?: string }>(`/content/${id}/publish`, {
+      const started = await api<{
+        jobId?: string;
+        status?: string;
+        content?: Content;
+        alreadyPublished?: boolean;
+      }>(`/content/${id}/publish`, {
         method: "POST",
         body: JSON.stringify({ withImage: true, status: "draft" }),
       });
+      if (started.alreadyPublished) {
+        await finishJob();
+        ok("Already on WordPress");
+        await load();
+        return;
+      }
+      const res = await pollJob<{
+        content: Content;
+        imageError?: string;
+        alreadyPublished?: boolean;
+      }>(id, "publish", "publish");
       await finishJob();
-      ok(
-        res.content.wpUrl
-          ? `Published to WordPress${res.imageError ? " (no featured image)" : ""}. Open View on the card anytime.`
-          : "Published draft"
-      );
+      const url = res.content?.wpUrl;
+      if (res.imageError) {
+        toastOk(
+          url
+            ? "Draft on WordPress — featured image failed. Open the card anytime."
+            : "Published draft — featured image failed."
+        );
+        toastErr(friendlyError(res.imageError));
+        setMsg("Published without featured image");
+      } else {
+        ok(url ? "Published to WordPress with featured image." : "Published draft");
+      }
       await load();
     } catch (err) {
       setJob(null);

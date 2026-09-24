@@ -6,6 +6,15 @@ function stripHtml(s: string) {
 export function friendlyError(raw: unknown): string {
   const msg = stripHtml(raw instanceof Error ? raw.message : String(raw ?? "Something went wrong"));
 
+  if (
+    /image generation is not enabled|no image models|no OpenAI key|no Gemini key|featured image|image probe|Skipping OpenAI images|Skipping Gemini images/i.test(
+      msg
+    )
+  ) {
+    const cleaned = msg.replace(/\s+/g, " ").trim();
+    return cleaned.length > 240 ? `${cleaned.slice(0, 237)}…` : cleaned;
+  }
+
   const jsonMatch = msg.match(/\{[\s\S]*\}/);
   if (jsonMatch) {
     try {

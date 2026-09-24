@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { estimateUsd } from "../lib/costs";
 import { providerHttpError } from "../lib/providerErrors";
+import { probeImageCapability } from "../lib/imageCapability";
 import { withRetry, fetchWithStatus } from "../lib/retry";
 import { researchTopic } from "./research";
 import { rankLinkTargets, recordAppliedLinks } from "./linking";
@@ -355,7 +356,10 @@ function naturalPhotoPrompt(prompt: string) {
 }
 
 /** Featured image — OpenAI first, Gemini native image as fallback */
-export async function generateFeaturedImageBytes(prompt: string): Promise<{
+export async function generateFeaturedImageBytes(
+  prompt: string,
+  onStage?: (stage: { pct: number; label: string }) => void
+): Promise<{
   bytes: Buffer;
   mime: string;
   provider: string;
@@ -364,8 +368,16 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
   const errors: string[] = [];
   const fullPrompt = naturalPhotoPrompt(prompt);
 
+  onStage?.({ pct: 18, label: "Checking which keys can generate images…" });
+  const cap = await probeImageCapability();
+  onStage?.({ pct: 20, label: cap.summary });
+
+  if (!cap.openai.ok && !cap.gemini.ok) {
+    throw new Error(cap.summary);
+  }
+
   const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey) {
+  if (openaiKey && cap.openai.ok) {
     try {
       const model = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1";
       const payload: Record<string, unknown> = {
@@ -393,7 +405,16 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
             },
             (status, text) => providerHttpError("OpenAI image", status, text)
           ),
-        { attempts: 3, baseDelayMs: 1000, label: "OpenAI image generation" }
+        {
+          attempts: 3,
+          baseDelayMs: 1000,
+          label: "OpenAI image generation",
+          onAttempt: (n, total) =>
+            onStage?.({
+              pct: 22 + n * 6,
+              label: n === 1 ? "Generating image (OpenAI)…" : `OpenAI image retry ${n}/${total}…`,
+            }),
+        }
       );
       const data = (await res.json()) as {
         data?: Array<{ b64_json?: string; url?: string }>;
@@ -415,12 +436,17 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
       }
       throw new Error("OpenAI image empty");
     } catch (err) {
-      errors.push(err instanceof Error ? err.message : String(err));
+      const msg = err instanceof Error ? err.message : String(err);
+      errors.push(msg);
+      onStage?.({ pct: 42, label: `OpenAI image failed — ${msg.slice(0, 80)}` });
     }
+  } else if (openaiKey && !cap.openai.ok) {
+    errors.push(cap.openai.detail);
+    onStage?.({ pct: 28, label: `Skipping OpenAI images: ${cap.openai.detail}` });
   }
 
   const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (geminiKey) {
+  if (geminiKey && cap.gemini.ok) {
     const models = [
       process.env.GEMINI_IMAGE_MODEL,
       "gemini-3.1-flash-image",
@@ -430,6 +456,7 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
 
     for (const model of models) {
       try {
+        onStage?.({ pct: 48, label: `Generating image (Gemini ${model})…` });
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
         const res = await withRetry(
           () =>
@@ -447,7 +474,19 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
               },
               (status, text) => providerHttpError("Gemini image", status, text)
             ),
-          { attempts: 3, baseDelayMs: 1000, label: `Gemini image (${model})` }
+          {
+            attempts: 3,
+            baseDelayMs: 1000,
+            label: `Gemini image (${model})`,
+            onAttempt: (n, total) =>
+              onStage?.({
+                pct: 50,
+                label:
+                  n === 1
+                    ? `Generating image (Gemini ${model})…`
+                    : `Gemini image retry ${n}/${total}…`,
+              }),
+          }
         );
         const data = (await res.json()) as {
           candidates?: Array<{
@@ -479,13 +518,21 @@ export async function generateFeaturedImageBytes(prompt: string): Promise<{
         }
         throw new Error("Gemini image empty (no inline image part)");
       } catch (err) {
-        errors.push(err instanceof Error ? err.message : String(err));
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(msg);
+        onStage?.({ pct: 58, label: `Gemini image failed — ${msg.slice(0, 80)}` });
       }
     }
+  } else if (geminiKey && !cap.gemini.ok) {
+    errors.push(cap.gemini.detail);
+    onStage?.({ pct: 46, label: `Skipping Gemini images: ${cap.gemini.detail}` });
   }
 
+  if (!openaiKey && !geminiKey) {
+    throw new Error("No image API keys set. Add OpenAI or Gemini under Maintenance.");
+  }
   if (errors.length) {
-    throw new Error(`Image generation failed: ${errors.join(" | ")}`);
+    throw new Error(errors.join(" · "));
   }
   return null;
 }
