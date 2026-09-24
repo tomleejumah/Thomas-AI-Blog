@@ -148,6 +148,9 @@ export default function MaintenancePage() {
               </span>
             </div>
             <p className="meta status-detail">{probe?.detail ?? "—"}</p>
+            {key === "openai" || key === "gemini" ? (
+              <p className="meta">Chat can be up while image models stay off on the same key.</p>
+            ) : null}
             <p className="meta status-key">
               {status?.keys[key]?.configured
                 ? `Key ····${status.keys[key].last4}`

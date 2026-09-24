@@ -17,6 +17,132 @@ import {
 import { localizeContent } from "../services/localize";
 import { proposeOptimization } from "../services/optimize";
 
+type PublishOpts = {
+  withImage?: boolean;
+  imagePrompt?: string;
+  status?: "draft" | "publish";
+};
+
+async function runPublish(
+  id: string,
+  body: PublishOpts,
+  onStage: (s: { pct: number; label: string }) => void
+) {
+  const content = await prisma.contentItem.findUnique({
+    where: { id },
+    include: { site: true, category: true },
+  });
+  if (!content) throw new Error("Not found");
+  if (content.status !== "APPROVED" && content.status !== "HUMAN_REVIEW") {
+    throw new Error("Content must be reviewed/approved before publish");
+  }
+  if (!content.bodyHtml) throw new Error("No body to publish");
+  if (content.wpPostId) {
+    return { content, alreadyPublished: true, imageError: undefined as string | undefined };
+  }
+
+  const categories =
+    content.category?.wpCategoryId != null ? [content.category.wpCategoryId] : [];
+  const html = [
+    content.bodyHtml,
+    content.schemaJson
+      ? `<script type="application/ld+json">${JSON.stringify(content.schemaJson)}</script>`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  let featuredMediaId: number | undefined;
+  let media: { id: number; source_url?: string } | undefined;
+  let imageError: string | undefined;
+  const auth = await siteWpAuth(content.site);
+
+  if (body.withImage !== false) {
+    const prompt =
+      body.imagePrompt ??
+      `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
+    try {
+      const img = await generateFeaturedImageBytes(prompt, onStage);
+      if (img) {
+        onStage({ pct: 78, label: "Uploading image to WordPress…" });
+        media = await uploadWpMedia(auth.baseUrl, auth.username, auth.appPassword, {
+          bytes: img.bytes,
+          filename: `${content.slug || "featured"}-${Date.now()}.png`,
+          mime: img.mime,
+          alt: content.focusKeyword || content.title,
+          title: content.title,
+        });
+        featuredMediaId = media.id;
+        onStage({ pct: 88, label: "Image uploaded to WordPress" });
+        await prisma.aiUsage.create({
+          data: {
+            contentId: content.id,
+            provider: img.provider,
+            model: img.model,
+            operation: "generate_image",
+            estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
+          },
+        });
+      }
+    } catch (err) {
+      imageError = err instanceof Error ? err.message : String(err);
+      onStage({ pct: 72, label: `Skipping image: ${imageError.slice(0, 90)}` });
+    }
+  } else {
+    onStage({ pct: 70, label: "Skipping image (turned off)" });
+  }
+
+  onStage({ pct: 90, label: "Creating WordPress draft…" });
+  const post = (await createWpDraftPost(auth.baseUrl, auth.username, auth.appPassword, {
+    title: content.seoTitle || content.title,
+    content: html,
+    categories,
+    status: body.status ?? "draft",
+    featuredMediaId,
+    excerpt: content.metaDescription ?? undefined,
+    slug: content.slug ?? undefined,
+    seo: {
+      focusKeyword: content.focusKeyword ?? undefined,
+      seoTitle: content.seoTitle ?? undefined,
+      metaDescription: content.metaDescription ?? undefined,
+    },
+  })) as { id: number; link?: string };
+
+  const updated = await prisma.contentItem.update({
+    where: { id },
+    data: {
+      status: "PUBLISHED",
+      wpPostId: post.id,
+      wpUrl: post.link ?? null,
+    },
+  });
+
+  let rankMath: { verified: boolean; mismatches: string[] } | null = null;
+  try {
+    onStage({ pct: 96, label: "Checking Rank Math fields…" });
+    rankMath = await verifyRankMathMeta(
+      auth.baseUrl,
+      auth.username,
+      auth.appPassword,
+      post.id,
+      {
+        focusKeyword: content.focusKeyword ?? undefined,
+        seoTitle: content.seoTitle ?? undefined,
+        metaDescription: content.metaDescription ?? undefined,
+      }
+    );
+    await prisma.contentItem.update({
+      where: { id },
+      data: { rankMathVerified: rankMath.verified, rankMathMismatches: rankMath.mismatches },
+    });
+  } catch {
+    /* Rank Math REST meta not registered */
+  }
+
+  onStage({ pct: 99, label: featuredMediaId ? "Uploaded — finishing…" : "Draft created — finishing…" });
+  return { content: updated, post, media, imageError, rankMath };
+}
+
 export const contentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/", async (req) => {
     const q = z.object({ siteId: z.string().optional() }).parse(req.query);
@@ -255,7 +381,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
   app.get("/:id/generate/status", async (req, reply) => {
     const { id } = req.params as { id: string };
     const job = await getJob(id);
-    if (!job) return reply.code(404).send({ error: "No generation job for this item" });
+    if (!job || job.type !== "generate") {
+      return reply.code(404).send({ error: "No generation job for this item" });
+    }
     return job;
   });
 
@@ -308,10 +436,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.body ?? {});
 
-    const content = await prisma.contentItem.findUnique({
-      where: { id },
-      include: { site: true, category: true },
-    });
+    const content = await prisma.contentItem.findUnique({ where: { id } });
     if (!content) return reply.code(404).send({ error: "Not found" });
     if (content.status !== "APPROVED" && content.status !== "HUMAN_REVIEW") {
       return reply
@@ -321,116 +446,34 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
     if (!content.bodyHtml) {
       return reply.code(400).send({ error: "No body to publish" });
     }
-
     if (content.wpPostId) {
       return { content, alreadyPublished: true };
     }
 
-    const categories =
-      content.category?.wpCategoryId != null
-        ? [content.category.wpCategoryId]
-        : [];
-
-    const html = [
-      content.bodyHtml,
-      content.schemaJson
-        ? `<script type="application/ld+json">${JSON.stringify(content.schemaJson)}</script>`
-        : "",
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    try {
-      let featuredMediaId: number | undefined;
-      let media: { id: number; source_url?: string } | undefined;
-      let imageError: string | undefined;
-      const auth = await siteWpAuth(content.site);
-
-      if (body.withImage !== false) {
-        const prompt =
-          body.imagePrompt ??
-          `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
-        try {
-          const img = await generateFeaturedImageBytes(prompt);
-          if (img) {
-            media = await uploadWpMedia(
-              auth.baseUrl,
-              auth.username,
-              auth.appPassword,
-              {
-                bytes: img.bytes,
-                filename: `${content.slug || "featured"}-${Date.now()}.png`,
-                mime: img.mime,
-                alt: content.focusKeyword || content.title,
-                title: content.title,
-              }
-            );
-            featuredMediaId = media.id;
-            await prisma.aiUsage.create({
-              data: {
-                contentId: content.id,
-                provider: img.provider,
-                model: img.model,
-                operation: "generate_image",
-                estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
-              },
-            });
-          }
-        } catch (err) {
-          imageError = err instanceof Error ? err.message : String(err);
-        }
-      }
-
-      const post = (await createWpDraftPost(
-        auth.baseUrl,
-        auth.username,
-        auth.appPassword,
-        {
-          title: content.seoTitle || content.title,
-          content: html,
-          categories,
-          status: body.status ?? "draft",
-          featuredMediaId,
-          excerpt: content.metaDescription ?? undefined,
-          slug: content.slug ?? undefined,
-          seo: {
-            focusKeyword: content.focusKeyword ?? undefined,
-            seoTitle: content.seoTitle ?? undefined,
-            metaDescription: content.metaDescription ?? undefined,
-          },
-        }
-      )) as { id: number; link?: string };
-
-      const updated = await prisma.contentItem.update({
-        where: { id },
-        data: {
-          status: "PUBLISHED",
-          wpPostId: post.id,
-          wpUrl: post.link ?? null,
-        },
-      });
-
-      let rankMath: { verified: boolean; mismatches: string[] } | null = null;
-      try {
-        rankMath = await verifyRankMathMeta(auth.baseUrl, auth.username, auth.appPassword, post.id, {
-          focusKeyword: content.focusKeyword ?? undefined,
-          seoTitle: content.seoTitle ?? undefined,
-          metaDescription: content.metaDescription ?? undefined,
-        });
-        await prisma.contentItem.update({
-          where: { id },
-          data: { rankMathVerified: rankMath.verified, rankMathMismatches: rankMath.mismatches },
-        });
-      } catch {
-        // Rank Math meta keys likely not registered for REST on this WP —
-        // see TASKS.md #5 note re: mu-plugin snippet.
-      }
-
-      return { content: updated, post, media, imageError, rankMath };
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Publish failed";
-      return reply.code(502).send({ error: message });
+    const existingJob = await getJob(id);
+    if (existingJob?.status === "running") {
+      return reply.code(409).send({ error: "A job is already running for this item" });
     }
+
+    await createJob(id, "publish", id);
+    void updateJob(id, { pct: 8, label: "Starting publish…" });
+
+    runPublish(id, body, (stage) => {
+      void updateJob(id, { pct: stage.pct, label: stage.label });
+    })
+      .then((result) => finishJob(id, result))
+      .catch((err) => failJob(id, err instanceof Error ? err.message : String(err)));
+
+    return reply.code(202).send({ jobId: id, status: "running" });
+  });
+
+  app.get("/:id/publish/status", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const job = await getJob(id);
+    if (!job || job.type !== "publish") {
+      return reply.code(404).send({ error: "No publish job for this item" });
+    }
+    return job;
   });
 
   // POST /content/:id/localize  { languages: ["pt","fr"] }

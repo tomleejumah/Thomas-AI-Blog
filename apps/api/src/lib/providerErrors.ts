@@ -32,6 +32,17 @@ export function providerHttpError(
         `${prefix}: AI credits or rate limit reached. Top up, then try again.`,
       );
     }
+    if (
+      /image/i.test(provider) &&
+      (status === 403 ||
+        /organization must be verified|not eligible|does not have access|unsupported_country/i.test(
+          detail
+        ))
+    ) {
+      return new Error(
+        `${prefix}: Image generation is not enabled on this API key (billing, org verification, or model access).`
+      );
+    }
     if (detail && detail.length <= 200 && !detail.startsWith("{")) {
       return new Error(`${prefix}: ${detail}`);
     }
