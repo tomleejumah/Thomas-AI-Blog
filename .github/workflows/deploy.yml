@@ -27,15 +27,13 @@ jobs:
             --exclude .git \
             "$GITHUB_WORKSPACE/" /home/server/Apis/thomas-ai-blog/
 
-      - name: Install, generate Prisma, build
+      - name: Install and build
         run: |
           set -euo pipefail
           cd /home/server/Apis/thomas-ai-blog/
           npm ci
           npm run build --workspace=packages/shared --if-present
-          npx prisma generate --schema=apps/api/prisma/schema.prisma
           npm run build --workspace=apps/api
-          test -d node_modules/@prisma/client
 
       - name: Reload PM2
         run: |
