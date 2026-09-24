@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-export type ToastKind = "ok" | "err";
+export type ToastKind = "ok" | "err" | "warn";
 
 type ToastItem = {
   id: number;
@@ -28,6 +28,10 @@ export function toastErr(text: string) {
   toast("err", text);
 }
 
+export function toastWarn(text: string) {
+  toast("warn", text);
+}
+
 export function ToastHost() {
   const [items, setItems] = useState<ToastItem[]>([]);
 
@@ -36,7 +40,7 @@ export function ToastHost() {
       setItems((prev) => [...prev.slice(-4), item]);
       window.setTimeout(() => {
         setItems((prev) => prev.filter((t) => t.id !== item.id));
-      }, 5600);
+      }, item.kind === "ok" ? 14000 : 18000);
     };
     listeners.add(onToast);
     return () => {

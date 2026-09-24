@@ -7,6 +7,15 @@ import { withRetry, fetchWithStatus } from "../lib/retry";
 import { researchTopic } from "./research";
 import { rankLinkTargets, recordAppliedLinks } from "./linking";
 
+/** Image 429 is quota, not a blip — do not retry it. */
+const IMAGE_RETRY_STATUSES = [500, 502, 503, 504];
+
+function isImageQuota(err: unknown) {
+  const status = (err as { status?: number }).status;
+  const msg = err instanceof Error ? err.message : String(err);
+  return status === 429 || /429|quota|rate limit|RESOURCE_EXHAUSTED/i.test(msg);
+}
+
 export type GeneratedArticle = {
   title: string;
   bodyHtml: string;
@@ -179,6 +188,43 @@ type ResearchCtx = {
 };
 type OnStage = GenerateOptions["onStage"];
 
+const WRITE_PCT_START = 40;
+const WRITE_PCT_SPAN = 45;
+
+function writingPct(chars: number) {
+  return WRITE_PCT_START + Math.min(WRITE_PCT_SPAN, Math.floor(chars / 90));
+}
+
+async function consumeSse(res: Response, onEvent: (payload: string) => void) {
+  if (!res.body) {
+    const text = await res.text();
+    if (text) onEvent(text);
+    return;
+  }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      if (trimmed.startsWith("data:")) {
+        const data = trimmed.slice(5).trim();
+        if (!data || data === "[DONE]") continue;
+        onEvent(data);
+      } else if (trimmed.startsWith("{")) {
+        onEvent(trimmed);
+      }
+    }
+  }
+}
+
 async function openaiArticle(
   title: string,
   language: string,
@@ -205,6 +251,7 @@ async function openaiArticle(
             response_format: { type: "json_object" },
             temperature: 0.9,
             max_tokens: 8000,
+            stream: true,
             messages: [
               { role: "system", content: SYSTEM_JSON },
               {
@@ -223,18 +270,56 @@ async function openaiArticle(
       onAttempt: (attempt, attempts) =>
         onStage?.({
           stage: "writing",
-          label: `Writing with OpenAI (attempt ${attempt}/${attempts})…`,
-          pct: 25 + attempt * 10,
+          label:
+            attempt === 1
+              ? "Trying OpenAI…"
+              : `OpenAI failed — retrying (${attempt}/${attempts})…`,
         }),
     }
   );
 
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>;
-    usage?: { prompt_tokens?: number; completion_tokens?: number };
-    model?: string;
-  };
-  const raw = data.choices?.[0]?.message?.content;
+  let raw = "";
+  let writing = false;
+  let lastBump = 0;
+  let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+  let model = process.env.OPENAI_MODEL ?? "gpt-4o";
+
+  await consumeSse(res, (payload) => {
+    let chunk: {
+      choices?: Array<{ delta?: { content?: string } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number };
+      model?: string;
+    };
+    try {
+      chunk = JSON.parse(payload);
+    } catch {
+      return;
+    }
+    const delta = chunk.choices?.[0]?.delta?.content;
+    if (delta) {
+      raw += delta;
+      const now = Date.now();
+      if (!writing) {
+        writing = true;
+        lastBump = now;
+        onStage?.({
+          stage: "writing",
+          label: "Writing with OpenAI…",
+          pct: WRITE_PCT_START,
+        });
+      } else if (now - lastBump >= 700) {
+        lastBump = now;
+        onStage?.({
+          stage: "writing",
+          label: "Writing with OpenAI…",
+          pct: writingPct(raw.length),
+        });
+      }
+    }
+    if (chunk.usage) usage = chunk.usage;
+    if (chunk.model) model = chunk.model;
+  });
+
   if (!raw) throw new Error("OpenAI returned empty content");
   const parsed = parseArticleJson(raw);
 
@@ -242,9 +327,9 @@ async function openaiArticle(
     article: {
       ...parsed,
       provider: "openai",
-      model: data.model ?? process.env.OPENAI_MODEL ?? "gpt-4o",
+      model,
     },
-    usage: data.usage,
+    usage,
   };
 }
 
@@ -272,8 +357,8 @@ async function geminiArticle(
 
   const modelErrors: string[] = [];
 
-  for (const [modelIdx, model] of models.entries()) {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
+  for (const model of models) {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`;
 
     try {
       const res = await withRetry(
@@ -306,21 +391,63 @@ async function geminiArticle(
         {
           attempts: 3,
           baseDelayMs: 1000,
-          label: `Gemini generateContent (${model})`,
+          label: "Gemini generateContent",
           onAttempt: (attempt, attempts) =>
             onStage?.({
               stage: "writing",
-              label: `Writing with Gemini ${model} (attempt ${attempt}/${attempts})…`,
-              pct: 25 + modelIdx * 15 + attempt * 5,
+              label:
+                attempt === 1
+                  ? "Trying Gemini…"
+                  : `Gemini failed — retrying (${attempt}/${attempts})…`,
             }),
         }
       );
 
-      const data = (await res.json()) as {
-        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
-      };
-      const raw = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+      let raw = "";
+      let writing = false;
+      let lastBump = 0;
+      let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+
+      await consumeSse(res, (payload) => {
+        let chunk: {
+          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+          usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+        };
+        try {
+          chunk = JSON.parse(payload);
+        } catch {
+          return;
+        }
+        const piece =
+          chunk.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+        if (piece) {
+          raw += piece;
+          const now = Date.now();
+          if (!writing) {
+            writing = true;
+            lastBump = now;
+            onStage?.({
+              stage: "writing",
+              label: "Writing with Gemini…",
+              pct: WRITE_PCT_START,
+            });
+          } else if (now - lastBump >= 700) {
+            lastBump = now;
+            onStage?.({
+              stage: "writing",
+              label: "Writing with Gemini…",
+              pct: writingPct(raw.length),
+            });
+          }
+        }
+        if (chunk.usageMetadata) {
+          usage = {
+            prompt_tokens: chunk.usageMetadata.promptTokenCount,
+            completion_tokens: chunk.usageMetadata.candidatesTokenCount,
+          };
+        }
+      });
+
       if (!raw) throw new Error("Gemini returned empty content");
       const parsed = parseArticleJson(raw);
 
@@ -330,14 +457,11 @@ async function geminiArticle(
           provider: "gemini",
           model,
         },
-        usage: {
-          prompt_tokens: data.usageMetadata?.promptTokenCount,
-          completion_tokens: data.usageMetadata?.candidatesTokenCount,
-        },
+        usage: usage ?? {},
       };
     } catch (err) {
       modelErrors.push(err instanceof Error ? err.message : String(err));
-      // try next model in the fallback list
+      onStage?.({ stage: "writing", label: "Gemini failed — retrying…" });
     }
   }
 
@@ -358,7 +482,7 @@ function naturalPhotoPrompt(prompt: string) {
 /** Featured image — OpenAI first, Gemini native image as fallback */
 export async function generateFeaturedImageBytes(
   prompt: string,
-  onStage?: (stage: { pct: number; label: string }) => void
+  onStage?: (stage: { pct?: number; label: string }) => void
 ): Promise<{
   bytes: Buffer;
   mime: string;
@@ -368,10 +492,8 @@ export async function generateFeaturedImageBytes(
   const errors: string[] = [];
   const fullPrompt = naturalPhotoPrompt(prompt);
 
-  onStage?.({ pct: 18, label: "Checking which keys can generate images…" });
+  onStage?.({ pct: 18, label: "Checking image keys…" });
   const cap = await probeImageCapability();
-  onStage?.({ pct: 20, label: cap.summary });
-
   if (!cap.openai.ok && !cap.gemini.ok) {
     throw new Error(cap.summary);
   }
@@ -406,13 +528,16 @@ export async function generateFeaturedImageBytes(
             (status, text) => providerHttpError("OpenAI image", status, text)
           ),
         {
-          attempts: 3,
+          attempts: 2,
           baseDelayMs: 1000,
+          retryStatuses: IMAGE_RETRY_STATUSES,
           label: "OpenAI image generation",
           onAttempt: (n, total) =>
             onStage?.({
-              pct: 22 + n * 6,
-              label: n === 1 ? "Generating image (OpenAI)…" : `OpenAI image retry ${n}/${total}…`,
+              label:
+                n === 1
+                  ? "Trying OpenAI for the featured image…"
+                  : `OpenAI image failed — retrying (${n}/${total})…`,
             }),
         }
       );
@@ -438,11 +563,11 @@ export async function generateFeaturedImageBytes(
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       errors.push(msg);
-      onStage?.({ pct: 42, label: `OpenAI image failed — ${msg.slice(0, 80)}` });
+      onStage?.({ label: "OpenAI image failed — trying Gemini…" });
     }
   } else if (openaiKey && !cap.openai.ok) {
     errors.push(cap.openai.detail);
-    onStage?.({ pct: 28, label: `Skipping OpenAI images: ${cap.openai.detail}` });
+    onStage?.({ label: "Skipping OpenAI images — trying Gemini…" });
   }
 
   const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
@@ -456,7 +581,7 @@ export async function generateFeaturedImageBytes(
 
     for (const model of models) {
       try {
-        onStage?.({ pct: 48, label: `Generating image (Gemini ${model})…` });
+        onStage?.({ label: "Trying Gemini for the featured image…" });
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
         const res = await withRetry(
           () =>
@@ -475,16 +600,16 @@ export async function generateFeaturedImageBytes(
               (status, text) => providerHttpError("Gemini image", status, text)
             ),
           {
-            attempts: 3,
+            attempts: 2,
             baseDelayMs: 1000,
+            retryStatuses: IMAGE_RETRY_STATUSES,
             label: `Gemini image (${model})`,
             onAttempt: (n, total) =>
               onStage?.({
-                pct: 50,
                 label:
                   n === 1
-                    ? `Generating image (Gemini ${model})…`
-                    : `Gemini image retry ${n}/${total}…`,
+                    ? "Trying Gemini for the featured image…"
+                    : `Gemini image failed — retrying (${n}/${total})…`,
               }),
           }
         );
@@ -520,12 +645,13 @@ export async function generateFeaturedImageBytes(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(msg);
-        onStage?.({ pct: 58, label: `Gemini image failed — ${msg.slice(0, 80)}` });
+        onStage?.({ label: "Gemini image failed — retrying…" });
+        if (isImageQuota(err)) break;
       }
     }
   } else if (geminiKey && !cap.gemini.ok) {
     errors.push(cap.gemini.detail);
-    onStage?.({ pct: 46, label: `Skipping Gemini images: ${cap.gemini.detail}` });
+    onStage?.({ label: "Skipping Gemini images" });
   }
 
   if (!openaiKey && !geminiKey) {
@@ -635,7 +761,10 @@ export async function generateForContent(
   const providerErrors: string[] = [];
   let live: Awaited<ReturnType<typeof openaiArticle>> = null;
 
-  for (const provider of order) {
+  for (let i = 0; i < order.length; i++) {
+    const provider = order[i];
+    const name = provider === "openai" ? "OpenAI" : "Gemini";
+    const next = order[i + 1];
     try {
       live =
         provider === "openai"
@@ -667,6 +796,12 @@ export async function generateForContent(
       const msg = err instanceof Error ? err.message : String(err);
       providerErrors.push(msg);
       live = null;
+      if (next) {
+        options.onStage?.({
+          stage: "writing",
+          label: `${name} failed — trying ${next === "openai" ? "OpenAI" : "Gemini"}…`,
+        });
+      }
     }
   }
 

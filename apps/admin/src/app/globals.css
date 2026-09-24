@@ -925,6 +925,14 @@ button.icon-close:hover {
   color: #ffc9c9;
 }
 
+.toast-warn {
+  border-color: rgba(240, 180, 80, 0.45);
+}
+
+.toast-warn p {
+  color: #f5d9a6;
+}
+
 .toast-dismiss {
   flex-shrink: 0;
   width: 28px;
