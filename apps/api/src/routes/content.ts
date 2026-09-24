@@ -493,20 +493,38 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
   });
 
   // POST /content/:id/localize  { languages: ["pt","fr"] }
+  // Returns immediately; the browser polls /localize/status so a long
+  // translation is not killed by the proxy as a network error.
   app.post("/:id/localize", async (req, reply) => {
     const { id } = req.params as { id: string };
     const body = z
       .object({ languages: z.array(z.enum(["pt", "fr"])).min(1) })
-      .parse(req.body);
+      .parse(req.body ?? {});
 
-    try {
-      const children = await localizeContent(id, body.languages);
-      return { children };
-    } catch (err) {
-      return reply.code(502).send({
-        error: err instanceof Error ? err.message : "Localization failed",
-      });
+    const existingJob = await getJob(id);
+    if (existingJob?.status === "running") {
+      return reply.code(409).send({ error: "A job is already running for this item" });
     }
+
+    await createJob(id, "localize", id);
+    void updateJob(id, { pct: 8, label: "Starting translation…" });
+
+    localizeContent(id, body.languages, (stage) => {
+      void updateJob(id, { pct: stage.pct, label: stage.label });
+    })
+      .then((children) => finishJob(id, { children }))
+      .catch((err) => failJob(id, err instanceof Error ? err.message : String(err)));
+
+    return reply.code(202).send({ jobId: id, status: "running" });
+  });
+
+  app.get("/:id/localize/status", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const job = await getJob(id);
+    if (!job || job.type !== "localize") {
+      return reply.code(404).send({ error: "No localization job for this item" });
+    }
+    return job;
   });
 
   // POST /content/:id/optimize — analyze live WP page, propose an update as NEEDS_REVISION

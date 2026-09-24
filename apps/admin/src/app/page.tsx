@@ -146,7 +146,7 @@ export default function DashboardPage() {
   async function pollJob<T = unknown>(
     id: string,
     kind: JobKind,
-    path: "generate" | "publish"
+    path: "generate" | "publish" | "localize"
   ): Promise<T> {
     while (true) {
       const status = await api<{
@@ -157,7 +157,7 @@ export default function DashboardPage() {
         error?: string;
       }>(`/content/${id}/${path}/status`).catch((err: unknown) => {
         const m = err instanceof Error ? err.message : String(err);
-        if (/no (publish|generation) job/i.test(m)) {
+        if (/no (publish|generation|localization) job/i.test(m)) {
           return { status: "running" as const, pct: 0, label: "", result: undefined, error: undefined };
         }
         throw err;
@@ -303,9 +303,14 @@ export default function DashboardPage() {
     setBusyId(id);
     startJob(id, "localize");
     try {
-      const res = await api<{ children: Array<{ id: string; language: string; title: string }> }>(
-        `/content/${id}/localize`,
-        { method: "POST", body: JSON.stringify({ languages: ["pt", "fr"] }) }
+      await api(`/content/${id}/localize`, {
+        method: "POST",
+        body: JSON.stringify({ languages: ["pt", "fr"] }),
+      });
+      const res = await pollJob<{ children: Array<{ id: string; language: string; title: string }> }>(
+        id,
+        "localize",
+        "localize"
       );
       await finishJob();
       const langs = (res.children ?? []).map((c) => c.language.toUpperCase()).join(", ");
