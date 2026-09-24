@@ -1,0 +1,88 @@
+name: Deploy API
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "apps/api/**"
+      - "packages/shared/**"
+      - ".github/workflows/deploy.yml"
+      - "ecosystem.config.cjs"
+      - "package-lock.json"
+      - "package.json"
+  workflow_dispatch:
+
+jobs:
+  deploy-api:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Sync files to server directory
+        run: |
+          rsync -av --delete \
+            --exclude node_modules \
+            --exclude .env \
+            --exclude .git \
+            "$GITHUB_WORKSPACE/" /home/server/Apis/thomas-ai-blog/
+
+      - name: Install, generate Prisma, build
+        run: |
+          set -euo pipefail
+          cd /home/server/Apis/thomas-ai-blog/
+          npm ci
+          npm run build --workspace=packages/shared --if-present
+          npx prisma generate --schema=apps/api/prisma/schema.prisma
+          npm run build --workspace=apps/api
+          test -d node_modules/@prisma/client
+
+      - name: Reload PM2
+        run: |
+          set -euo pipefail
+          cd /home/server/Apis/thomas-ai-blog/
+          /usr/local/bin/pm2 reload ecosystem.config.cjs --only ace-api || \
+            /usr/local/bin/pm2 start ecosystem.config.cjs --only ace-api
+          /usr/local/bin/pm2 save
+
+      - name: Health smoke
+        run: |
+          set -euo pipefail
+          try_url() {
+            local label="$1"
+            shift
+            local code body
+            body=$(mktemp)
+            code=$(curl -sS -L --max-time 8 -o "$body" -w "%{http_code}" "$@" || echo "000")
+            echo "$label -> $code"
+            if [ "$code" = "200" ] && grep -Eq '"ok"[[:space:]]*:[[:space:]]*true' "$body"; then
+              rm -f "$body"
+              return 0
+            fi
+            head -c 400 "$body" 2>/dev/null || true
+            echo
+            rm -f "$body"
+            return 1
+          }
+
+          ok=0
+          for i in $(seq 1 20); do
+            if try_url "local :4010 (attempt $i)" http://127.0.0.1:4010/health; then
+              ok=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ok" != 1 ]; then
+            echo "::error::API did not become healthy on :4010"
+            /usr/local/bin/pm2 status ace-api || true
+            /usr/local/bin/pm2 logs ace-api --lines 40 --nostream || true
+            exit 1
+          fi
+
+          if try_url "nginx /ai-content/" -H "Host: api.tommlyjumah.dev" http://127.0.0.1/ai-content/health; then
+            echo "nginx ok"
+          else
+            echo "::warning::nginx /ai-content/health failed; local :4010 passed"
+          fi
+          echo "api smoke ok"

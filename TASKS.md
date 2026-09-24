@@ -3,6 +3,52 @@
 Mark `[x]` when merged to master. Each feature lists exact files touched so
 work can be picked up by any LLM/dev mid-way — just paste this file + repo.
 
+---
+
+## Health check (2026-09-24) — do this before new features
+
+`f970137` landed features 1–8 on master. Code is in the tree; **it is not production-ready yet.**
+
+### Blockers
+
+- [x] **Prisma** — operator ran `npx prisma db push` on the server (2026-09-24). Deploy now runs `prisma generate` without `|| true`.
+- [x] **Deploy workflow** — `.github/workflows/deploy.yml` (replaced `delploy.yml`): `npm ci`, required Prisma generate, PM2 reload, health smoke on `:4010/health` + optional nginx `/ai-content/health`.
+- [ ] **Rank Math MU plugin not installed on WP** — copy `wp-mu-plugin-rankmath-meta.php` to `wp-content/mu-plugins/` or verification always fails (TASKS #5)
+
+### Wired but not usable in the admin chrome
+
+- [ ] **Nav missing new pages.** `AppShell` still only Dashboard / Sites / Maintenance. These exist but are URL-only:
+  - `/planning` — still asks for raw Site ID (no site picker)
+  - `/review` — still asks for raw Content ID (not hooked to dashboard row)
+  - `/usage` — duplicate of Maintenance usage cards; different payload shape
+- [ ] **Localization API exists, no language tabs in `DocEditor`** (TASKS #4 leftover)
+- [ ] Planning / review / usage pages use raw `<p className="error">` not toasts
+
+### Working (spot-checked)
+
+- Generate is async `202` + `GET /content/:id/generate/status`; dashboard `pollGenerateJob` matches
+- OpenAI ↔ Gemini article fallback + image fallback still in `generate.ts`
+- Toasts on dashboard generate/publish/delete
+- Mobile topbar / ⋮ menus
+- CORS includes Vercel origins
+- Admin `tsc` is clean
+
+### Cleanup / hygiene
+
+- [x] Deleted leftover `0001-Add-features-6-8-…patch` from repo root
+- [ ] Scan is still **synchronous** (large WP sites will time out the request) — queue when touching #6 next
+- [ ] Cost `siteId` filter skips planning usage (no contentId) — noted under #7
+
+### Suggested next session
+
+1. Add Planning / Review / Usage to `AppShell` with real site/content pickers
+2. Install Rank Math MU plugin on LisbonYacht
+3. Then continue product work
+
+---
+
+
+
 ## 1. Site Scanner (architecture import + orphan detection) — DONE (basic scan pre-existed)
 - [x] `apps/api/prisma/schema.prisma` — added `isOrphan`, `lastScannedAt` to `SitePage`
 - [x] `apps/api/src/services/wordpress.ts` — `listWpPosts` paginates (was capped at 40) + fetches content; added `listWpPostTypes`
