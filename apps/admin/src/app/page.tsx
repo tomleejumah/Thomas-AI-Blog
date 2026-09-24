@@ -109,6 +109,7 @@ export default function DashboardPage() {
     | { kind: "delete"; id: string; title: string; linked: boolean }
     | { kind: "bulk-delete"; ids: string[]; linkedCount: number }
     | { kind: "publish"; id: string; title: string }
+    | { kind: "localize"; id: string; title: string }
     | { kind: "notice"; title: string; body: string }
     | null
   >(null);
@@ -298,14 +299,20 @@ export default function DashboardPage() {
     }
   }
 
-  async function runLocalize(id: string) {
+  function askLocalize(id: string) {
     setMenuId(null);
+    const item = contents.find((c) => c.id === id);
+    setDialog({ kind: "localize", id, title: item?.title ?? "this article" });
+  }
+
+  async function runLocalize(id: string, language: "pt" | "fr") {
+    setDialog(null);
     setBusyId(id);
     startJob(id, "localize");
     try {
       await api(`/content/${id}/localize`, {
         method: "POST",
-        body: JSON.stringify({ languages: ["pt", "fr"] }),
+        body: JSON.stringify({ languages: [language] }),
       });
       const res = await pollJob<{ children: Array<{ id: string; language: string; title: string }> }>(
         id,
@@ -753,9 +760,9 @@ export default function DashboardPage() {
                         {c.bodyHtml && !c.parentContentId && c.language === "en" ? (
                           <button
                             type="button"
-                            onClick={() => runLocalize(c.id)}
+                            onClick={() => askLocalize(c.id)}
                           >
-                            Translate PT + FR
+                            Translate
                           </button>
                         ) : null}
                         {canPublish ? (
@@ -965,8 +972,8 @@ export default function DashboardPage() {
                 Check the WordPress draft’s featured image.
               </p>
               <p>
-                <strong>Translations</strong> — English masters: use Translate PT + FR on the card. Each language is
-                its own item to preview and send to WordPress.
+                <strong>Translations</strong> — English masters: use Translate and pick Portuguese or French. Each
+                language is its own item to preview and send to WordPress.
               </p>
             </div>
             <div
@@ -1114,6 +1121,33 @@ export default function DashboardPage() {
                   Delete
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {dialog?.kind === "localize" ? (
+        <div className="modal" role="dialog" aria-modal="true">
+          <div className="modal-card form">
+            <div className="modal-head">
+              <h2>Translate</h2>
+              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+                ×
+              </button>
+            </div>
+            <p>
+              Translate <strong>{dialog.title}</strong> into one language.
+            </p>
+            <div className="dialog-actions">
+              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => runLocalize(dialog.id, "pt")}>
+                Portuguese
+              </button>
+              <button type="button" onClick={() => runLocalize(dialog.id, "fr")}>
+                French
+              </button>
             </div>
           </div>
         </div>

@@ -81,7 +81,141 @@ ${facts.map((f) => `- ${f.key}: ${f.value}`).join("\n") || "(none provided)"}`;
     schemaJson?: Prisma.InputJsonValue;
   };
 
-  return { article: parsed, usage: data.usage, model: data.model ?? "gpt-4o" };
+  return {
+    article: parsed,
+    usage: data.usage,
+    model: data.model ?? "gpt-4o",
+    provider: "openai" as const,
+  };
+}
+
+async function adaptWithGemini(
+  language: "pt" | "fr",
+  parent: {
+    title: string;
+    bodyHtml: string | null;
+    focusKeyword: string | null;
+    seoTitle: string | null;
+    metaDescription: string | null;
+  },
+  facts: Array<{ key: string; value: string }>,
+  onStage?: (stage: { pct?: number; label: string }) => void
+) {
+  const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!key) throw new Error("No Gemini key configured");
+
+  const langName = LANG_NAMES[language];
+  const prompt = `You are a native ${langName} SEO content localizer. You will be given a
+master English article. Do NOT machine-translate literally — produce a
+locally natural ${langName} adaptation: your own primary keyword, secondary
+keywords, search intent, SEO title, meta description, slug, and FAQ/anchor
+wording appropriate for ${langName}-speaking search behavior, while
+preserving every factual/business claim exactly (no invented prices,
+locations, guarantees, or services). Respond ONLY with JSON:
+{"title":"","bodyHtml":"","focusKeyword":"","seoTitle":"","metaDescription":"","slug":"","schemaJson":{}}
+
+Master title: ${parent.title}
+Master body (HTML): ${parent.bodyHtml ?? ""}
+Master focus keyword: ${parent.focusKeyword ?? ""}
+
+Approved business facts (must stay accurate in the ${langName} version):
+${facts.map((f) => `- ${f.key}: ${f.value}`).join("\n") || "(none provided)"}`;
+
+  const models = [
+    process.env.GEMINI_MODEL,
+    "gemini-3.6-flash",
+    "gemini-3.1-flash",
+    "gemini-2.5-flash",
+  ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
+
+  const modelErrors: string[] = [];
+  for (const model of models) {
+    onStage?.({ label: `Translating to ${language.toUpperCase()} with Gemini (${model})…` });
+    try {
+      const res = await withRetry(
+        () =>
+          fetchWithStatus(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: prompt }] }],
+                generationConfig: {
+                  responseMimeType: "application/json",
+                  temperature: 0.7,
+                  maxOutputTokens: 8192,
+                },
+              }),
+            },
+            (status, text) => providerHttpError("Gemini", status, text)
+          ),
+        { attempts: 3, baseDelayMs: 1000, label: `Gemini localize ${model}` }
+      );
+      const data = (await res.json()) as {
+        candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
+        usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+      };
+      const raw = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+      if (!raw) throw new Error("Gemini returned empty content");
+      const parsed = JSON.parse(stripFence(raw)) as {
+        title: string;
+        bodyHtml: string;
+        focusKeyword: string;
+        seoTitle: string;
+        metaDescription: string;
+        slug: string;
+        schemaJson?: Prisma.InputJsonValue;
+      };
+      return {
+        article: parsed,
+        usage: {
+          prompt_tokens: data.usageMetadata?.promptTokenCount,
+          completion_tokens: data.usageMetadata?.candidatesTokenCount,
+        },
+        model,
+        provider: "gemini" as const,
+      };
+    } catch (err) {
+      modelErrors.push(err instanceof Error ? err.message : String(err));
+      onStage?.({ label: "Gemini model failed — trying the next model…" });
+    }
+  }
+  throw new Error(modelErrors.join(" · ") || "Gemini: all models failed");
+}
+
+async function adaptArticle(
+  language: "pt" | "fr",
+  parent: {
+    title: string;
+    bodyHtml: string | null;
+    focusKeyword: string | null;
+    seoTitle: string | null;
+    metaDescription: string | null;
+  },
+  facts: Array<{ key: string; value: string }>,
+  onStage?: (stage: { pct?: number; label: string }) => void
+) {
+  const errors: string[] = [];
+  if (process.env.OPENAI_API_KEY) {
+    try {
+      onStage?.({ label: `Translating to ${language.toUpperCase()} with OpenAI…` });
+      return await adaptWithOpenAI(language, parent, facts);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+      onStage?.({ label: "OpenAI failed — trying Gemini…" });
+    }
+  }
+  if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
+    try {
+      return await adaptWithGemini(language, parent, facts, onStage);
+    } catch (err) {
+      errors.push(err instanceof Error ? err.message : String(err));
+    }
+  }
+  throw new Error(
+    errors.join(" · ") || "No AI provider configured (set OPENAI_API_KEY or GEMINI_API_KEY)"
+  );
 }
 
 /** Creates (or refreshes) a localized child ContentItem per requested language. */
@@ -101,14 +235,16 @@ export async function localizeContent(
   const results = [];
   for (let i = 0; i < languages.length; i++) {
     const language = languages[i];
+    if (!language) continue;
     onStage?.({
       pct: Math.round(10 + (i / languages.length) * 80),
       label: `Translating to ${language.toUpperCase()}…`,
     });
-    const { article, usage, model } = await adaptWithOpenAI(
+    const { article, usage, model, provider } = await adaptArticle(
       language,
       parent,
-      facts.map((f) => ({ key: f.key, value: f.value }))
+      facts.map((f) => ({ key: f.key, value: f.value })),
+      onStage
     );
 
     const existing = await prisma.contentItem.findFirst({
@@ -137,13 +273,13 @@ export async function localizeContent(
     await prisma.aiUsage.create({
       data: {
         contentId: child.id,
-        provider: "openai",
+        provider,
         model,
         operation: `localize_${language}`,
         inputTokens: usage?.prompt_tokens,
         outputTokens: usage?.completion_tokens,
         estimatedUsd: estimateUsd({
-          provider: "openai",
+          provider,
           model,
           inputTokens: usage?.prompt_tokens ?? 0,
           outputTokens: usage?.completion_tokens ?? 0,
