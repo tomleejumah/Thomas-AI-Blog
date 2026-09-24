@@ -30,6 +30,12 @@ type UsagePayload = {
     lastAt: string | null;
     lastOperation: string | null;
   }>;
+  byOperation: Array<{
+    operation: string;
+    calls: number;
+    estimatedUsd: number;
+    estimatedUsdLabel: string;
+  }>;
 };
 
 function LivePulse({ ok }: { ok: boolean }) {
@@ -195,6 +201,19 @@ export default function MaintenancePage() {
           );
         })}
       </div>
+
+      {usage?.byOperation?.length ? (
+        <ul className="usage-ops">
+          {usage.byOperation.map((row) => (
+            <li key={row.operation}>
+              <span>{row.operation.replace(/_/g, " ")}</span>
+              <span className="meta">
+                {row.calls} · {row.estimatedUsdLabel}
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       <h2 className="subhead">Update keys</h2>
       <p className="muted">Leave blank to keep the current key. Saved to the API server only.</p>
