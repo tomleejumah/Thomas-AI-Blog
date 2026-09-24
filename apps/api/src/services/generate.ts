@@ -12,6 +12,7 @@ export type GeneratedArticle = {
   focusKeyword: string;
   seoTitle: string;
   metaDescription: string;
+  slug?: string;
   schemaJson: Prisma.InputJsonValue;
   provider: string;
   model: string;
@@ -32,16 +33,25 @@ export type GenerateOptions = {
 const SYSTEM_JSON = `You are an elite magazine-level SEO blog writer and editor (think Condé Nast Traveler / specialist industry longform — not a thin AI outline).
 
 Return ONLY valid JSON with keys:
-title, bodyHtml, focusKeyword, seoTitle, metaDescription, schemaJson (BlogPosting), imagePrompt (vivid English photo brief).
+title, bodyHtml, focusKeyword, seoTitle, metaDescription, slug, schemaJson (BlogPosting), imagePrompt (vivid English photo brief).
 
 WRITING STANDARD — mandatory:
-- Master-level prose: vivid, sensory, authoritative, fluent. Varied sentence rhythm. No robotic filler, no "In today's world", no keyword stuffing.
-- VERBOSE longform: aim for 1,400–2,200+ words of real content in bodyHtml (not a stub). Deep sections, not bullet dumps alone.
+- Master-level prose: vivid, sensory, authoritative, fluent. Varied sentence rhythm. No robotic filler, no "In today's world".
+- VERBOSE longform: 1,400–2,200+ words in bodyHtml. Deep sections, not bullet dumps alone.
 - Semantic HTML only: h2/h3, p, ul/ol, blockquote when it fits, optional short FAQ.
-- SEO: natural keyword use; unique seoTitle (~50–60 chars) and metaDescription (~150–160 chars).
 - Locale: fully idiomatic in the requested language (en/pt/fr).
 - Facts: do NOT invent prices, guarantees, licenses, phone numbers, or business claims not in the brief.
-- imagePrompt: English photo brief for a REAL-looking featured image — natural light, documentary/lifestyle, imperfect reality. Never “AI art”, CGI, plastic skin, or over-processed stock.
+- imagePrompt: English photo brief for a REAL-looking featured image — natural light, documentary/lifestyle. Never “AI art”.
+
+RANK MATH — exact-phrase tests (this is how the plugin scores 0–100):
+- focusKeyword: 2–4 words, lowercase, the exact phrase you will repeat. Not a long sentence.
+- Use that EXACT phrase (same words, same order) in: seoTitle (start with it), metaDescription, first <p>, at least one <h2>, and naturally 4–8 more times in body (density ~1%, never stuff).
+- seoTitle: 50–60 characters, unique, starts with focusKeyword.
+- metaDescription: 140–160 characters, includes focusKeyword once.
+- slug: kebab-case of focusKeyword only (e.g. family-yacht-charter-lisbon).
+- First 100 words of bodyHtml must include focusKeyword.
+- Include at least 2 internal <a href> from the provided site links (if any) and 1 reputable external source when research URLs exist.
+- Do not skip the keyword because a fancier synonym “sounds better” — Rank Math only counts the exact string.
 
 STRUCTURE VARIETY — critical (do NOT reuse a template):
 - Every article must feel uniquely shaped for THIS site + topic. Never copy a fixed skeleton like Hook → Overview → Tips → FAQ → CTA for every post.
@@ -118,6 +128,17 @@ function userPayload(
   });
 }
 
+function keywordSlug(keyword: string, title: string) {
+  const raw = (keyword || title || "")
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return raw || undefined;
+}
+
 function stubArticle(title: string, language: string): GeneratedArticle {
   return {
     title,
@@ -125,6 +146,7 @@ function stubArticle(title: string, language: string): GeneratedArticle {
     focusKeyword: title.toLowerCase().slice(0, 60),
     seoTitle: `${title} | Guide`,
     metaDescription: `Learn about ${title}.`,
+    slug: keywordSlug(title, title),
     schemaJson: {
       "@context": "https://schema.org",
       "@type": "BlogPosting",
@@ -622,6 +644,7 @@ export async function generateForContent(
     data: {
       title: article.title || content.title,
       bodyHtml: article.bodyHtml,
+      slug: article.slug || keywordSlug(article.focusKeyword, article.title || content.title) || undefined,
       focusKeyword: article.focusKeyword,
       seoTitle: article.seoTitle,
       metaDescription: article.metaDescription,

@@ -392,6 +392,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
           status: body.status ?? "draft",
           featuredMediaId,
           excerpt: content.metaDescription ?? undefined,
+          slug: content.slug ?? undefined,
           seo: {
             focusKeyword: content.focusKeyword ?? undefined,
             seoTitle: content.seoTitle ?? undefined,

@@ -123,6 +123,7 @@ export async function createWpDraftPost(
     status?: "draft" | "publish";
     featuredMediaId?: number;
     excerpt?: string;
+    slug?: string;
     seo?: {
       focusKeyword?: string;
       seoTitle?: string;
@@ -144,6 +145,7 @@ export async function createWpDraftPost(
       categories: input.categories ?? [],
       featured_media: input.featuredMediaId ?? 0,
       excerpt: input.excerpt ?? "",
+      ...(input.slug ? { slug: input.slug } : {}),
       ...(Object.keys(meta).length ? { meta } : {}),
     }),
   })) as { id: number; link?: string };
