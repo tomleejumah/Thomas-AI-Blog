@@ -85,7 +85,11 @@ ${facts.map((f) => `- ${f.key}: ${f.value}`).join("\n") || "(none provided)"}`;
 }
 
 /** Creates (or refreshes) a localized child ContentItem per requested language. */
-export async function localizeContent(parentId: string, languages: Array<"pt" | "fr">) {
+export async function localizeContent(
+  parentId: string,
+  languages: Array<"pt" | "fr">,
+  onStage?: (stage: { pct?: number; label: string }) => void
+) {
   const parent = await prisma.contentItem.findUniqueOrThrow({
     where: { id: parentId },
     include: { site: true, category: true },
@@ -95,7 +99,12 @@ export async function localizeContent(parentId: string, languages: Array<"pt" | 
   const facts = await prisma.businessFact.findMany({ where: { siteId: parent.siteId } });
 
   const results = [];
-  for (const language of languages) {
+  for (let i = 0; i < languages.length; i++) {
+    const language = languages[i];
+    onStage?.({
+      pct: Math.round(10 + (i / languages.length) * 80),
+      label: `Translating to ${language.toUpperCase()}…`,
+    });
     const { article, usage, model } = await adaptWithOpenAI(
       language,
       parent,
