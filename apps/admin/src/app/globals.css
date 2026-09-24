@@ -757,6 +757,58 @@ textarea {
   width: min(1100px, 96vw);
 }
 
+.modal-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.modal-head h2 {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  font-size: 1.15rem;
+  line-height: 1.35;
+}
+
+.modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-shrink: 0;
+}
+
+button.icon-close {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 1.15rem;
+  font-weight: 400;
+  line-height: 1;
+}
+
+button.icon-close:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .form-wide {
   max-width: none;
 }
