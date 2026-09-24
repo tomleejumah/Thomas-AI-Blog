@@ -6,6 +6,7 @@ import { probeImageCapability } from "../lib/imageCapability";
 import { withRetry, fetchWithStatus } from "../lib/retry";
 import { researchTopic } from "./research";
 import { rankLinkTargets, recordAppliedLinks } from "./linking";
+import { saveFeaturedImage } from "../lib/featuredStore";
 
 /** Image 429 is quota, not a blip — do not retry it. */
 const IMAGE_RETRY_STATUSES = [500, 502, 503, 504];
@@ -494,94 +495,118 @@ export async function generateFeaturedImageBytes(
 
   onStage?.({ pct: 18, label: "Checking image keys…" });
   const cap = await probeImageCapability();
-  if (!cap.openai.ok && !cap.gemini.ok) {
-    throw new Error(cap.summary);
-  }
 
   const openaiKey = process.env.OPENAI_API_KEY;
-  if (openaiKey && cap.openai.ok) {
-    try {
-      const model = process.env.OPENAI_IMAGE_MODEL ?? "gpt-image-1";
-      const payload: Record<string, unknown> = {
-        model,
-        prompt: fullPrompt.slice(0, 1000),
-        n: 1,
-      };
-      if (model.includes("dall-e")) {
-        payload.size = model.includes("dall-e-3") ? "1792x1024" : "1024x1024";
-      } else {
-        payload.size = "1024x1024";
-      }
-
-      const res = await withRetry(
-        () =>
-          fetchWithStatus(
-            "https://api.openai.com/v1/images/generations",
-            {
-              method: "POST",
-              headers: {
-                Authorization: `Bearer ${openaiKey}`,
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify(payload),
-            },
-            (status, text) => providerHttpError("OpenAI image", status, text)
-          ),
-        {
-          attempts: 2,
-          baseDelayMs: 1000,
-          retryStatuses: IMAGE_RETRY_STATUSES,
-          label: "OpenAI image generation",
-          onAttempt: (n, total) =>
-            onStage?.({
-              label:
-                n === 1
-                  ? "Trying OpenAI for the featured image…"
-                  : `OpenAI image failed — retrying (${n}/${total})…`,
-            }),
-        }
-      );
-      const data = (await res.json()) as {
-        data?: Array<{ b64_json?: string; url?: string }>;
-      };
-      const item = data.data?.[0];
-      if (item?.b64_json) {
-        return {
-          bytes: Buffer.from(item.b64_json, "base64"),
-          mime: "image/png",
-          provider: "openai",
-          model,
-        };
-      }
-      if (item?.url) {
-        const imgRes = await fetch(item.url);
-        if (!imgRes.ok) throw new Error(`OpenAI image download ${imgRes.status}`);
-        const buf = Buffer.from(await imgRes.arrayBuffer());
-        return { bytes: buf, mime: "image/png", provider: "openai", model };
-      }
-      throw new Error("OpenAI image empty");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(msg);
-      onStage?.({ label: "OpenAI image failed — trying Gemini…" });
-    }
-  } else if (openaiKey && !cap.openai.ok) {
-    errors.push(cap.openai.detail);
-    onStage?.({ label: "Skipping OpenAI images — trying Gemini…" });
+  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
+  if (!openaiKey && !geminiKey) {
+    throw new Error("No image API keys set. Add OpenAI or Gemini under Maintenance.");
   }
 
-  const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
-  if (geminiKey && cap.gemini.ok) {
+  const openaiModels = [
+    process.env.OPENAI_IMAGE_MODEL,
+    ...cap.openai.models,
+    "gpt-image-1",
+    "dall-e-3",
+    "dall-e-2",
+  ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
+
+  if (openaiKey) {
+    for (let i = 0; i < openaiModels.length; i++) {
+      const model = openaiModels[i];
+      const last = i === openaiModels.length - 1;
+      try {
+        const payload: Record<string, unknown> = {
+          model,
+          prompt: fullPrompt.slice(0, 1000),
+          n: 1,
+        };
+        if (model.includes("dall-e")) {
+          payload.size = model.includes("dall-e-3") ? "1792x1024" : "1024x1024";
+        } else {
+          payload.size = "1024x1024";
+        }
+
+        const res = await withRetry(
+          () =>
+            fetchWithStatus(
+              "https://api.openai.com/v1/images/generations",
+              {
+                method: "POST",
+                headers: {
+                  Authorization: `Bearer ${openaiKey}`,
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify(payload),
+              },
+              (status, text) => providerHttpError("OpenAI image", status, text)
+            ),
+          {
+            attempts: 2,
+            baseDelayMs: 1000,
+            retryStatuses: IMAGE_RETRY_STATUSES,
+            label: "OpenAI image generation",
+            onAttempt: (n, total) =>
+              onStage?.({
+                label:
+                  n === 1
+                    ? i === 0
+                      ? "Trying OpenAI for the featured image…"
+                      : "OpenAI failed — trying another model…"
+                    : `OpenAI image failed — retrying (${n}/${total})…`,
+              }),
+          }
+        );
+        const data = (await res.json()) as {
+          data?: Array<{ b64_json?: string; url?: string }>;
+        };
+        const item = data.data?.[0];
+        if (item?.b64_json) {
+          return {
+            bytes: Buffer.from(item.b64_json, "base64"),
+            mime: "image/png",
+            provider: "openai",
+            model,
+          };
+        }
+        if (item?.url) {
+          const imgRes = await fetch(item.url);
+          if (!imgRes.ok) throw new Error(`OpenAI image download ${imgRes.status}`);
+          const buf = Buffer.from(await imgRes.arrayBuffer());
+          return { bytes: buf, mime: "image/png", provider: "openai", model };
+        }
+        throw new Error("OpenAI image empty");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        errors.push(msg);
+        onStage?.({
+          label: last
+            ? geminiKey
+              ? "OpenAI image failed — trying Gemini…"
+              : "OpenAI image failed"
+            : "OpenAI failed — trying another model…",
+        });
+        if (isImageQuota(err)) break;
+      }
+    }
+  }
+
+  if (geminiKey) {
     const models = [
       process.env.GEMINI_IMAGE_MODEL,
+      ...cap.gemini.models,
       "gemini-3.1-flash-image",
       "gemini-2.5-flash-image",
       "gemini-2.0-flash-preview-image-generation",
+      "imagen-4.0-generate-001",
     ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
 
-    for (const model of models) {
+    for (let i = 0; i < models.length; i++) {
+      const model = models[i];
+      const last = i === models.length - 1;
       try {
-        onStage?.({ label: "Trying Gemini for the featured image…" });
+        onStage?.({
+          label: i === 0 ? "Trying Gemini for the featured image…" : "Gemini failed — trying another model…",
+        });
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
         const res = await withRetry(
           () =>
@@ -603,12 +628,14 @@ export async function generateFeaturedImageBytes(
             attempts: 2,
             baseDelayMs: 1000,
             retryStatuses: IMAGE_RETRY_STATUSES,
-            label: `Gemini image (${model})`,
+            label: "Gemini image",
             onAttempt: (n, total) =>
               onStage?.({
                 label:
                   n === 1
-                    ? "Trying Gemini for the featured image…"
+                    ? i === 0
+                      ? "Trying Gemini for the featured image…"
+                      : "Gemini failed — trying another model…"
                     : `Gemini image failed — retrying (${n}/${total})…`,
               }),
           }
@@ -645,18 +672,14 @@ export async function generateFeaturedImageBytes(
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(msg);
-        onStage?.({ label: "Gemini image failed — retrying…" });
+        onStage?.({
+          label: last ? "Gemini image failed" : "Gemini failed — trying another model…",
+        });
         if (isImageQuota(err)) break;
       }
     }
-  } else if (geminiKey && !cap.gemini.ok) {
-    errors.push(cap.gemini.detail);
-    onStage?.({ label: "Skipping Gemini images" });
   }
 
-  if (!openaiKey && !geminiKey) {
-    throw new Error("No image API keys set. Add OpenAI or Gemini under Maintenance.");
-  }
   if (errors.length) {
     throw new Error(errors.join(" · "));
   }
@@ -859,6 +882,37 @@ export async function generateForContent(
     },
   });
 
+  let hasFeaturedImage = false;
+  if (options.withImage !== false) {
+    options.onStage?.({ stage: "saving", label: "Trying featured image…", pct: 92 });
+    try {
+      const img = await generateFeaturedImageBytes(
+        article.imagePrompt ?? `Natural lifestyle photo for: ${article.title}`,
+        (s) =>
+          options.onStage?.({
+            stage: "saving",
+            label: s.label,
+            pct: s.pct ?? 92,
+          })
+      );
+      if (img) {
+        saveFeaturedImage(content.id, img.bytes);
+        hasFeaturedImage = true;
+        await prisma.aiUsage.create({
+          data: {
+            contentId: content.id,
+            provider: img.provider,
+            model: img.model,
+            operation: "generate_image",
+            estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
+          },
+        });
+      }
+    } catch {
+      /* article still saved */
+    }
+  }
+
   return {
     content: updated,
     provider: article.provider,
@@ -867,6 +921,7 @@ export async function generateForContent(
       ? { provider: research.provider, sources: research.sources.length }
       : null,
     researchError,
+    hasFeaturedImage,
     imagePrompt: article.imagePrompt ?? `Featured image for: ${article.title}`,
     usage: {
       inputTokens: usage?.prompt_tokens ?? null,

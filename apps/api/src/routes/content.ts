@@ -8,6 +8,11 @@ import {
 import { siteWpAuth } from "../lib/siteAuth";
 import { createJob, updateJob, finishJob, failJob, getJob } from "../lib/jobs";
 import {
+  hasFeaturedImage as featuredOnDisk,
+  readFeaturedImage,
+  saveFeaturedImage,
+} from "../lib/featuredStore";
+import {
   createWpCategory,
   createWpDraftPost,
   deleteWpPost,
@@ -62,8 +67,12 @@ async function runPublish(
       body.imagePrompt ??
       `Natural lifestyle photo for WordPress featured image about: ${content.title}. Real scene, natural light, documentary look.`;
     try {
-      const img = await generateFeaturedImageBytes(prompt, onStage);
+      const stored = readFeaturedImage(id);
+      const img = stored
+        ? { bytes: stored, mime: "image/png", provider: "stored", model: "featured" }
+        : await generateFeaturedImageBytes(prompt, onStage);
       if (img) {
+        if (!stored) saveFeaturedImage(id, img.bytes);
         onStage({ pct: 78, label: "Uploading image to WordPress…" });
         media = await uploadWpMedia(auth.baseUrl, auth.username, auth.appPassword, {
           bytes: img.bytes,
@@ -74,15 +83,17 @@ async function runPublish(
         });
         featuredMediaId = media.id;
         onStage({ pct: 88, label: "Image uploaded to WordPress" });
-        await prisma.aiUsage.create({
-          data: {
-            contentId: content.id,
-            provider: img.provider,
-            model: img.model,
-            operation: "generate_image",
-            estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
-          },
-        });
+        if (img.provider !== "stored") {
+          await prisma.aiUsage.create({
+            data: {
+              contentId: content.id,
+              provider: img.provider,
+              model: img.model,
+              operation: "generate_image",
+              estimatedUsd: img.provider === "openai" ? 0.04 : 0.02,
+            },
+          });
+        }
       }
     } catch (err) {
       imageError = err instanceof Error ? err.message : String(err);
@@ -172,7 +183,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
         site: { select: { id: true, name: true } },
       },
     });
-    return { contents };
+    return { contents: contents.map((c) => ({ ...c, hasFeaturedImage: featuredOnDisk(c.id) })) };
   });
 
   app.get("/:id", async (req, reply) => {
@@ -185,7 +196,14 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     if (!content) return reply.code(404).send({ error: "Not found" });
-    return { content };
+    return { content: { ...content, hasFeaturedImage: featuredOnDisk(content.id) } };
+  });
+
+  app.get("/:id/featured-image", async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const bytes = readFeaturedImage(id);
+    if (!bytes) return reply.code(404).send({ error: "No featured image" });
+    return reply.type("image/png").send(bytes);
   });
 
   app.post("/", async (req, reply) => {

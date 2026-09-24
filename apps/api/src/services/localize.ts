@@ -3,6 +3,7 @@ import { prisma } from "../lib/prisma";
 import { estimateUsd } from "../lib/costs";
 import { providerHttpError } from "../lib/providerErrors";
 import { withRetry, fetchWithStatus } from "../lib/retry";
+import { copyFeaturedImage } from "../lib/featuredStore";
 
 const LANG_NAMES: Record<string, string> = { en: "English", pt: "Portuguese", fr: "French" };
 
@@ -130,7 +131,7 @@ ${facts.map((f) => `- ${f.key}: ${f.value}`).join("\n") || "(none provided)"}`;
 
   const modelErrors: string[] = [];
   for (const model of models) {
-    onStage?.({ label: `Translating to ${language.toUpperCase()} with Gemini (${model})…` });
+    onStage?.({ label: "Trying Gemini…" });
     try {
       const res = await withRetry(
         () =>
@@ -178,7 +179,7 @@ ${facts.map((f) => `- ${f.key}: ${f.value}`).join("\n") || "(none provided)"}`;
       };
     } catch (err) {
       modelErrors.push(err instanceof Error ? err.message : String(err));
-      onStage?.({ label: "Gemini model failed — trying the next model…" });
+      onStage?.({ label: "Gemini failed — retrying…" });
     }
   }
   throw new Error(modelErrors.join(" · ") || "Gemini: all models failed");
@@ -288,6 +289,7 @@ export async function localizeContent(
     });
 
     results.push(child);
+    copyFeaturedImage(parent.id, child.id);
   }
 
   return results;
