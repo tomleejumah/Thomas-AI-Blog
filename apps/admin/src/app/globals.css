@@ -801,6 +801,19 @@ textarea {
   color: inherit;
 }
 
+.featured-preview-wrap {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.featured-preview {
+  width: 100%;
+  max-height: 280px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+}
+
 .modal-head {
   display: flex;
   align-items: flex-start;

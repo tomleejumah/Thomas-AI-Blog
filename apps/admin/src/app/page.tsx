@@ -3,7 +3,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import DocEditor from "@/components/DocEditor";
 import { toastErr, toastOk, toastWarn } from "@/components/ToastHost";
-import { api } from "@/lib/api";
+import { api, API_BASE, getToken } from "@/lib/api";
 import { friendlyError } from "@/lib/errors";
 
 type Site = { id: string; name: string; baseUrl: string };
@@ -24,6 +24,7 @@ type Content = {
   rankMathVerified?: boolean | null;
   rankMathMismatches?: string[];
   parentContentId?: string | null;
+  hasFeaturedImage?: boolean;
   site?: { id: string; name: string };
 };
 
@@ -38,6 +39,48 @@ function extractLinks(html?: string | null) {
 function hasSchema(schema: unknown) {
   if (!schema || typeof schema !== "object") return false;
   return Object.keys(schema as object).length > 0;
+}
+
+function FeaturedPreview({ id }: { id: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let url: string | null = null;
+    let cancelled = false;
+    const token = getToken();
+    fetch(`${API_BASE}/content/${id}/featured-image`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("none");
+        return r.blob();
+      })
+      .then((blob) => {
+        if (cancelled) return;
+        url = URL.createObjectURL(blob);
+        setSrc(url);
+      })
+      .catch(() => {
+        if (!cancelled) setSrc(null);
+      });
+    return () => {
+      cancelled = true;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [id]);
+  if (!src) {
+    return (
+      <p>
+        <strong>Image</strong> — none yet. Generated on Generate / send to WordPress when the image
+        key has credit.
+      </p>
+    );
+  }
+  return (
+    <div className="featured-preview-wrap">
+      <strong>Featured image</strong>
+      <img className="featured-preview" src={src} alt="Featured" />
+    </div>
+  );
 }
 
 type Filter = "all" | "idea" | "generated" | "review" | "published";
@@ -967,13 +1010,10 @@ export default function DashboardPage() {
                     ? ` Mismatch: ${(preview.rankMathMismatches ?? []).join(", ") || "check WP editor"}.`
                     : ""}
               </p>
+              <FeaturedPreview id={preview.id} />
               <p>
-                <strong>Image</strong> — featured image is created on Approve &amp; publish draft (needs image credit).
-                Check the WordPress draft’s featured image.
-              </p>
-              <p>
-                <strong>Translations</strong> — English masters: use Translate and pick Portuguese or French. Each
-                language is its own item to preview and send to WordPress.
+                <strong>Translations</strong> — English masters: use Translate PT + FR on the card. Each language is
+                its own item to preview and send to WordPress.
               </p>
             </div>
             <div

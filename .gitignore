@@ -5,6 +5,6 @@ dist
 .env.local
 *.log
 .DS_Store
-coverage
+data/featured
 apps/api/prisma/*.db
 apps/api/prisma/*.db-journal
