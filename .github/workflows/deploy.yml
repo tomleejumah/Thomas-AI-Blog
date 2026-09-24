@@ -32,6 +32,7 @@ jobs:
           set -euo pipefail
           cd /home/server/Apis/thomas-ai-blog/
           npm ci
+          npm run db:generate --workspace=apps/api
           npm run build --workspace=packages/shared --if-present
           npm run build --workspace=apps/api
 

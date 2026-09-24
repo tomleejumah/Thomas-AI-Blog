@@ -26,7 +26,7 @@ type PublishOpts = {
 async function runPublish(
   id: string,
   body: PublishOpts,
-  onStage: (s: { pct: number; label: string }) => void
+  onStage: (s: { pct?: number; label: string }) => void
 ) {
   const content = await prisma.contentItem.findUnique({
     where: { id },

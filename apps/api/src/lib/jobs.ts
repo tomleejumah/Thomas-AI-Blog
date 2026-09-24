@@ -86,7 +86,7 @@ export async function updateJob(id: string, patch: { pct?: number; label?: strin
   }
 }
 
-function jsonSafe(value: unknown): Prisma.InputJsonValue {
+function jsonSafe(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
   if (value === undefined) return Prisma.JsonNull;
   return JSON.parse(
     JSON.stringify(value, (_k, v) => {
