@@ -243,6 +243,31 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
       };
     });
 
+    const byOp = new Map<string, { calls: number; estimatedUsd: number }>();
+    for (const u of recent) {
+      const usd =
+        u.estimatedUsd ??
+        estimateUsd({
+          provider: u.provider,
+          model: u.model,
+          inputTokens: u.inputTokens,
+          outputTokens: u.outputTokens,
+          operation: u.operation,
+        });
+      const prev = byOp.get(u.operation) ?? { calls: 0, estimatedUsd: 0 };
+      prev.calls += 1;
+      prev.estimatedUsd += usd;
+      byOp.set(u.operation, prev);
+    }
+    const byOperation = [...byOp.entries()]
+      .map(([operation, row]) => ({
+        operation,
+        calls: row.calls,
+        estimatedUsd: Math.round(row.estimatedUsd * 1_000_000) / 1_000_000,
+        estimatedUsdLabel: formatUsd(row.estimatedUsd),
+      }))
+      .sort((a, b) => b.estimatedUsd - a.estimatedUsd);
+
     const estimatedUsdTotal = byProvider.reduce((acc, row) => acc + row.estimatedUsd, 0);
 
     return {
@@ -250,6 +275,7 @@ export const maintenanceRoutes: FastifyPluginAsync = async (app) => {
       estimatedUsdTotalLabel: formatUsd(estimatedUsdTotal),
       note: "Per-provider estimates from logged usage — not live billing balances.",
       byProvider,
+      byOperation,
     };
   });
 };

@@ -12,7 +12,6 @@ import { wordpressRoutes } from "./routes/wordpress";
 import { contentRoutes } from "./routes/content";
 import { planningRoutes } from "./routes/planning";
 import { linkingRoutes } from "./routes/linking";
-import { usageRoutes } from "./routes/usage";
 import { maintenanceRoutes } from "./routes/maintenance";
 
 const port = Number(process.env.API_PORT ?? 4000);
@@ -53,7 +52,6 @@ async function main() {
   await app.register(contentRoutes, { prefix: "/content" });
   await app.register(planningRoutes, { prefix: "/sites" });
   await app.register(linkingRoutes, { prefix: "/sites" });
-  await app.register(usageRoutes, { prefix: "/usage" });
 
   await app.listen({ port, host: "0.0.0.0" });
 }
