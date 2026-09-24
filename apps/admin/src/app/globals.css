@@ -772,6 +772,35 @@ textarea {
   width: min(1100px, 96vw);
 }
 
+.seo-panel {
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  display: grid;
+  gap: 0.45rem;
+}
+
+.seo-panel h3 {
+  margin: 0 0 0.2rem;
+  font-size: 0.95rem;
+}
+
+.seo-panel p,
+.seo-panel ul {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted);
+}
+
+.seo-panel strong {
+  color: var(--text);
+}
+
+.seo-panel a {
+  color: inherit;
+}
+
 .modal-head {
   display: flex;
   align-items: flex-start;

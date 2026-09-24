@@ -1,3 +1,4 @@
+import type { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { estimateUsd } from "../lib/costs";
 import { providerHttpError } from "../lib/providerErrors";
@@ -31,7 +32,7 @@ keywords, search intent, SEO title, meta description, slug, and FAQ/anchor
 wording appropriate for ${langName}-speaking search behavior, while
 preserving every factual/business claim exactly (no invented prices,
 locations, guarantees, or services). Respond ONLY with JSON:
-{"title":"","bodyHtml":"","focusKeyword":"","seoTitle":"","metaDescription":"","slug":""}`;
+{"title":"","bodyHtml":"","focusKeyword":"","seoTitle":"","metaDescription":"","slug":"","schemaJson":{}}`;
 
   const user = `Master title: ${parent.title}
 Master body (HTML): ${parent.bodyHtml ?? ""}
@@ -77,6 +78,7 @@ ${facts.map((f) => `- ${f.key}: ${f.value}`).join("\n") || "(none provided)"}`;
     seoTitle: string;
     metaDescription: string;
     slug: string;
+    schemaJson?: Prisma.InputJsonValue;
   };
 
   return { article: parsed, usage: data.usage, model: data.model ?? "gpt-4o" };
@@ -115,6 +117,7 @@ export async function localizeContent(parentId: string, languages: Array<"pt" | 
       focusKeyword: article.focusKeyword,
       seoTitle: article.seoTitle,
       metaDescription: article.metaDescription,
+      schemaJson: article.schemaJson ?? parent.schemaJson ?? undefined,
       parentContentId: parent.id,
     };
 
