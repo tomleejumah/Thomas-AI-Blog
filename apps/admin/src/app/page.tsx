@@ -148,30 +148,6 @@ export default function DashboardPage() {
     }
   }
 
-  // Same as pollGenerateJob but for "publish" jobs.
-  async function pollPublishJob<T = unknown>(id: string): Promise<T> {
-    while (true) {
-      const status = await api<{
-        status: "running" | "done" | "error";
-        pct: number;
-        label: string;
-        result?: T;
-        error?: string;
-      }>(`/content/${id}/publish/status`);
-
-      setJob((prev) =>
-        prev && prev.kind === "publish" && prev.id === id
-          ? { ...prev, pct: status.pct, label: status.label }
-          : prev
-      );
-
-      if (status.status === "done") return status.result as T;
-      if (status.status === "error") throw new Error(status.error || "Publish failed");
-
-      await new Promise((r) => setTimeout(r, 700));
-    }
-  }
-
   function startJob(id: string, kind: JobKind) {
     setJob({
       id,
@@ -303,11 +279,10 @@ export default function DashboardPage() {
     try {
       await api(`/content/${id}/approve`, { method: "POST", body: "{}" });
       setJob((p) => (p ? { ...p, pct: Math.max(p.pct, 10), label: "Publishing draft…" } : p));
-      await api(`/content/${id}/publish`, {
+      const res = await api<{ content: Content; imageError?: string }>(`/content/${id}/publish`, {
         method: "POST",
         body: JSON.stringify({ withImage: true, status: "draft" }),
       });
-      const res = await pollPublishJob<{ content: Content; imageError?: string }>(id);
       await finishJob();
       ok(
         res.content.wpUrl
