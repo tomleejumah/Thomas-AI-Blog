@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import DocEditor from "@/components/DocEditor";
-import { toastErr, toastOk } from "@/components/ToastHost";
+import { toastErr, toastOk, toastWarn } from "@/components/ToastHost";
 import { api } from "@/lib/api";
 import { friendlyError } from "@/lib/errors";
 
@@ -140,14 +140,18 @@ export default function DashboardPage() {
       }>(`/content/${id}/${path}/status`).catch((err: unknown) => {
         const m = err instanceof Error ? err.message : String(err);
         if (/no (publish|generation) job/i.test(m)) {
-          return { status: "running" as const, pct: 8, label: "", result: undefined, error: undefined };
+          return { status: "running" as const, pct: 0, label: "", result: undefined, error: undefined };
         }
         throw err;
       });
 
       setJob((prev) =>
         prev && prev.kind === kind && prev.id === id
-          ? { ...prev, pct: status.pct, label: status.label || prev.label }
+          ? {
+              ...prev,
+              pct: Math.max(prev.pct, status.pct),
+              label: status.label || prev.label,
+            }
           : prev
       );
 
@@ -305,19 +309,22 @@ export default function DashboardPage() {
       }
       const res = await pollJob<{
         content: Content;
-        imageError?: string;
+        imageError?: string | null;
+        hasFeaturedImage?: boolean;
         alreadyPublished?: boolean;
       }>(id, "publish", "publish");
       await finishJob();
       const url = res.content?.wpUrl;
-      if (res.imageError) {
-        toastOk(
-          url
-            ? "Draft on WordPress — featured image failed. Open the card anytime."
-            : "Published draft — featured image failed."
+      const hasImage = res.hasFeaturedImage === true;
+      if (!hasImage) {
+        const reason = friendlyError(
+          res.imageError || "Featured image was not attached."
         );
-        toastErr(friendlyError(res.imageError));
-        setMsg("Published without featured image");
+        const text = url
+          ? `Draft on WordPress. Featured image skipped: ${reason}`
+          : `Published draft. Featured image skipped: ${reason}`;
+        setMsg(text);
+        toastWarn(text);
       } else {
         ok(url ? "Published to WordPress with featured image." : "Published draft");
       }

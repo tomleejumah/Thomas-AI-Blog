@@ -86,10 +86,14 @@ async function runPublish(
       }
     } catch (err) {
       imageError = err instanceof Error ? err.message : String(err);
-      onStage({ pct: 72, label: `Skipping image: ${imageError.slice(0, 90)}` });
+      onStage({ label: "Skipping image — continuing to WordPress" });
     }
   } else {
     onStage({ pct: 70, label: "Skipping image (turned off)" });
+  }
+
+  if (body.withImage !== false && !featuredMediaId && !imageError) {
+    imageError = "Featured image was not attached.";
   }
 
   onStage({ pct: 90, label: "Creating WordPress draft…" });
@@ -140,7 +144,19 @@ async function runPublish(
   }
 
   onStage({ pct: 99, label: featuredMediaId ? "Uploaded — finishing…" : "Draft created — finishing…" });
-  return { content: updated, post, media, imageError, rankMath };
+  return {
+    content: {
+      id: updated.id,
+      title: updated.title,
+      status: updated.status,
+      wpUrl: updated.wpUrl,
+      wpPostId: updated.wpPostId,
+    },
+    hasFeaturedImage: Boolean(featuredMediaId),
+    featuredMediaId: featuredMediaId ?? null,
+    imageError: imageError ?? null,
+    rankMath,
+  };
 }
 
 export const contentRoutes: FastifyPluginAsync = async (app) => {

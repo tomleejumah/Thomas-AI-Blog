@@ -3,6 +3,7 @@
  * Map so progress survives restarts and works across multiple API
  * instances/processes. Same function names/shape as before; now async.
  */
+import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 
 export type JobStatus = "running" | "done" | "error";
@@ -56,7 +57,7 @@ export async function createJob(id: string, type = "generate", contentId?: strin
       pct: 2,
       label: "Starting…",
       error: null,
-      result: undefined,
+      result: Prisma.JsonNull,
     },
   });
   return toJob(row);
@@ -64,10 +65,19 @@ export async function createJob(id: string, type = "generate", contentId?: strin
 
 export async function updateJob(id: string, patch: { pct?: number; label?: string }) {
   try {
+    const current = await prisma.job.findUnique({
+      where: { id },
+      select: { pct: true },
+    });
+    if (!current) return;
+    const nextPct =
+      patch.pct === undefined
+        ? undefined
+        : Math.max(current.pct, Math.max(0, Math.min(99, patch.pct)));
     await prisma.job.update({
       where: { id },
       data: {
-        ...(patch.pct !== undefined ? { pct: Math.max(0, Math.min(99, patch.pct)) } : {}),
+        ...(nextPct !== undefined ? { pct: nextPct } : {}),
         ...(patch.label !== undefined ? { label: patch.label } : {}),
       },
     });
@@ -76,10 +86,21 @@ export async function updateJob(id: string, patch: { pct?: number; label?: strin
   }
 }
 
+function jsonSafe(value: unknown): Prisma.InputJsonValue {
+  if (value === undefined) return Prisma.JsonNull;
+  return JSON.parse(
+    JSON.stringify(value, (_k, v) => {
+      if (typeof v === "bigint") return Number(v);
+      if (v instanceof Date) return v.toISOString();
+      return v;
+    })
+  ) as Prisma.InputJsonValue;
+}
+
 export async function finishJob(id: string, result: unknown) {
   await prisma.job.update({
     where: { id },
-    data: { status: "COMPLETED", pct: 100, label: "Done", result: result as object },
+    data: { status: "COMPLETED", pct: 100, label: "Done", result: jsonSafe(result) },
   });
 }
 
