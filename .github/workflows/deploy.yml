@@ -14,7 +14,7 @@ on:
 
 jobs:
   deploy-api:
-    runs-on: self-hosted
+    runs-on: [self-hosted, server]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
