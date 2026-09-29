@@ -31,7 +31,7 @@ type PublishOpts = {
 async function runPublish(
   id: string,
   body: PublishOpts,
-  onStage: (s: { pct?: number; label: string }) => void
+  onStage: (s: { pct?: number; label: string }) => void,
 ) {
   const content = await prisma.contentItem.findUnique({
     where: { id },
@@ -43,11 +43,17 @@ async function runPublish(
   }
   if (!content.bodyHtml) throw new Error("No body to publish");
   if (content.wpPostId) {
-    return { content, alreadyPublished: true, imageError: undefined as string | undefined };
+    return {
+      content,
+      alreadyPublished: true,
+      imageError: undefined as string | undefined,
+    };
   }
 
   const categories =
-    content.category?.wpCategoryId != null ? [content.category.wpCategoryId] : [];
+    content.category?.wpCategoryId != null
+      ? [content.category.wpCategoryId]
+      : [];
   const html = [
     content.bodyHtml,
     content.schemaJson
@@ -69,18 +75,28 @@ async function runPublish(
     try {
       const stored = readFeaturedImage(id);
       const img = stored
-        ? { bytes: stored, mime: "image/png", provider: "stored", model: "featured" }
+        ? {
+            bytes: stored,
+            mime: "image/png",
+            provider: "stored",
+            model: "featured",
+          }
         : await generateFeaturedImageBytes(prompt, onStage);
       if (img) {
         if (!stored) saveFeaturedImage(id, img.bytes);
         onStage({ pct: 78, label: "Uploading image to WordPress…" });
-        media = await uploadWpMedia(auth.baseUrl, auth.username, auth.appPassword, {
-          bytes: img.bytes,
-          filename: `${content.slug || "featured"}-${Date.now()}.png`,
-          mime: img.mime,
-          alt: content.focusKeyword || content.title,
-          title: content.title,
-        });
+        media = await uploadWpMedia(
+          auth.baseUrl,
+          auth.username,
+          auth.appPassword,
+          {
+            bytes: img.bytes,
+            filename: `${content.slug || "featured"}-${Date.now()}.png`,
+            mime: img.mime,
+            alt: content.focusKeyword || content.title,
+            title: content.title,
+          },
+        );
         featuredMediaId = media.id;
         onStage({ pct: 88, label: "Image uploaded to WordPress" });
         if (img.provider !== "stored") {
@@ -108,20 +124,25 @@ async function runPublish(
   }
 
   onStage({ pct: 90, label: "Creating WordPress draft…" });
-  const post = (await createWpDraftPost(auth.baseUrl, auth.username, auth.appPassword, {
-    title: content.seoTitle || content.title,
-    content: html,
-    categories,
-    status: body.status ?? "draft",
-    featuredMediaId,
-    excerpt: content.metaDescription ?? undefined,
-    slug: content.slug ?? undefined,
-    seo: {
-      focusKeyword: content.focusKeyword ?? undefined,
-      seoTitle: content.seoTitle ?? undefined,
-      metaDescription: content.metaDescription ?? undefined,
+  const post = (await createWpDraftPost(
+    auth.baseUrl,
+    auth.username,
+    auth.appPassword,
+    {
+      title: content.seoTitle || content.title,
+      content: html,
+      categories,
+      status: body.status ?? "draft",
+      featuredMediaId,
+      excerpt: content.metaDescription ?? undefined,
+      slug: content.slug ?? undefined,
+      seo: {
+        focusKeyword: content.focusKeyword ?? undefined,
+        seoTitle: content.seoTitle ?? undefined,
+        metaDescription: content.metaDescription ?? undefined,
+      },
     },
-  })) as { id: number; link?: string };
+  )) as { id: number; link?: string };
 
   const updated = await prisma.contentItem.update({
     where: { id },
@@ -144,17 +165,25 @@ async function runPublish(
         focusKeyword: content.focusKeyword ?? undefined,
         seoTitle: content.seoTitle ?? undefined,
         metaDescription: content.metaDescription ?? undefined,
-      }
+      },
     );
     await prisma.contentItem.update({
       where: { id },
-      data: { rankMathVerified: rankMath.verified, rankMathMismatches: rankMath.mismatches },
+      data: {
+        rankMathVerified: rankMath.verified,
+        rankMathMismatches: rankMath.mismatches,
+      },
     });
   } catch {
     /* Rank Math REST meta not registered */
   }
 
-  onStage({ pct: 99, label: featuredMediaId ? "Uploaded — finishing…" : "Draft created — finishing…" });
+  onStage({
+    pct: 99,
+    label: featuredMediaId
+      ? "Uploaded — finishing…"
+      : "Draft created — finishing…",
+  });
   return {
     content: {
       id: updated.id,
@@ -183,7 +212,12 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
         site: { select: { id: true, name: true } },
       },
     });
-    return { contents: contents.map((c) => ({ ...c, hasFeaturedImage: featuredOnDisk(c.id) })) };
+    return {
+      contents: contents.map((c) => ({
+        ...c,
+        hasFeaturedImage: featuredOnDisk(c.id),
+      })),
+    };
   });
 
   app.get("/:id", async (req, reply) => {
@@ -196,7 +230,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     if (!content) return reply.code(404).send({ error: "Not found" });
-    return { content: { ...content, hasFeaturedImage: featuredOnDisk(content.id) } };
+    return {
+      content: { ...content, hasFeaturedImage: featuredOnDisk(content.id) },
+    };
   });
 
   app.get("/:id/featured-image", async (req, reply) => {
@@ -243,7 +279,7 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
             auth.baseUrl,
             auth.username,
             auth.appPassword,
-            name
+            name,
           );
           const created = await prisma.category.create({
             data: {
@@ -359,10 +395,16 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
     if (deleteWp && existing.wpPostId) {
       try {
         const auth = await siteWpAuth(existing.site);
-        await deleteWpPost(auth.baseUrl, auth.username, auth.appPassword, existing.wpPostId);
+        await deleteWpPost(
+          auth.baseUrl,
+          auth.username,
+          auth.appPassword,
+          existing.wpPostId,
+        );
         wpDeleted = true;
       } catch (err) {
-        const message = err instanceof Error ? err.message : "WordPress delete failed";
+        const message =
+          err instanceof Error ? err.message : "WordPress delete failed";
         return reply.code(400).send({ error: message });
       }
     }
@@ -393,7 +435,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
 
     const existingJob = await getJob(id);
     if (existingJob?.status === "running") {
-      return reply.code(409).send({ error: "Generation already in progress for this item" });
+      return reply
+        .code(409)
+        .send({ error: "Generation already in progress for this item" });
     }
 
     await createJob(id, "generate", id);
@@ -403,11 +447,18 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       provider: body.provider ?? "auto",
       withImage: body.withImage,
       onStage: (stage) => {
-        void updateJob(id, { pct: stage.pct, label: stage.label });
+        // void updateJob(id, { pct: stage.pct, label: stage.label });
+        void updateJob(id, {
+          pct: stage.pct,
+          label: stage.label,
+          reset: stage.reset,
+        });
       },
     })
       .then((result) => finishJob(id, result))
-      .catch((err) => failJob(id, err instanceof Error ? err.message : String(err)));
+      .catch((err) =>
+        failJob(id, err instanceof Error ? err.message : String(err)),
+      );
 
     return reply.code(202).send({ jobId: id, status: "running" });
   });
@@ -438,7 +489,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
 
   app.post("/:id/reject", async (req, reply) => {
     const { id } = req.params as { id: string };
-    const body = z.object({ note: z.string().optional() }).parse(req.body ?? {});
+    const body = z
+      .object({ note: z.string().optional() })
+      .parse(req.body ?? {});
     const content = await prisma.contentItem.findUnique({ where: { id } });
     if (!content) return reply.code(404).send({ error: "Not found" });
     const updated = await prisma.contentItem.update({
@@ -486,7 +539,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
 
     const existingJob = await getJob(id);
     if (existingJob?.status === "running") {
-      return reply.code(409).send({ error: "A job is already running for this item" });
+      return reply
+        .code(409)
+        .send({ error: "A job is already running for this item" });
     }
 
     await createJob(id, "publish", id);
@@ -496,7 +551,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       void updateJob(id, { pct: stage.pct, label: stage.label });
     })
       .then((result) => finishJob(id, result))
-      .catch((err) => failJob(id, err instanceof Error ? err.message : String(err)));
+      .catch((err) =>
+        failJob(id, err instanceof Error ? err.message : String(err)),
+      );
 
     return reply.code(202).send({ jobId: id, status: "running" });
   });
@@ -521,7 +578,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
 
     const existingJob = await getJob(id);
     if (existingJob?.status === "running") {
-      return reply.code(409).send({ error: "A job is already running for this item" });
+      return reply
+        .code(409)
+        .send({ error: "A job is already running for this item" });
     }
 
     await createJob(id, "localize", id);
@@ -531,7 +590,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
       void updateJob(id, { pct: stage.pct, label: stage.label });
     })
       .then((children) => finishJob(id, { children }))
-      .catch((err) => failJob(id, err instanceof Error ? err.message : String(err)));
+      .catch((err) =>
+        failJob(id, err instanceof Error ? err.message : String(err)),
+      );
 
     return reply.code(202).send({ jobId: id, status: "running" });
   });
@@ -540,7 +601,9 @@ export const contentRoutes: FastifyPluginAsync = async (app) => {
     const { id } = req.params as { id: string };
     const job = await getJob(id);
     if (!job || job.type !== "localize") {
-      return reply.code(404).send({ error: "No localization job for this item" });
+      return reply
+        .code(404)
+        .send({ error: "No localization job for this item" });
     }
     return job;
   });

@@ -211,7 +211,8 @@ export default function DashboardPage() {
         prev && prev.kind === kind && prev.id === id
           ? {
               ...prev,
-              pct: Math.max(prev.pct, status.pct),
+              pct: status.pct,
+/*               pct: Math.max(prev.pct, status.pct), */
               label: status.label || prev.label,
             }
           : prev

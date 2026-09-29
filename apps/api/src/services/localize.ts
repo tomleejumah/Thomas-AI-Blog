@@ -124,9 +124,11 @@ ${facts.map((f) => `- ${f.key}: ${f.value}`).join("\n") || "(none provided)"}`;
 
   const models = [
     process.env.GEMINI_MODEL,
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.1-flash",
-    "gemini-2.5-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
   ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
 
   const modelErrors: string[] = [];

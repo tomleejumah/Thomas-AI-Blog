@@ -30,15 +30,19 @@ export type GeneratedArticle = {
   imagePrompt?: string;
 };
 
+export type StageUpdate = {
+  stage: "researching" | "writing" | "saving";
+  label: string;
+  pct?: number;
+  /** Allow the bar to move backwards (new attempt / new model starts over). */
+  reset?: boolean;
+};
+
 export type GenerateOptions = {
   brief?: string;
   provider?: "openai" | "gemini" | "auto";
   withImage?: boolean;
-  onStage?: (stage: {
-    stage: "researching" | "writing" | "saving";
-    label: string;
-    pct?: number;
-  }) => void;
+  onStage?: (stage: StageUpdate) => void;
 };
 
 const SYSTEM_JSON = `You are an elite magazine-level SEO blog writer and editor (think Condé Nast Traveler / specialist industry longform — not a thin AI outline).
@@ -240,6 +244,8 @@ async function openaiArticle(
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
 
+  const requestedModel = process.env.OPENAI_MODEL ?? "gpt-4o";
+
   const res = await withRetry(
     () =>
       fetchWithStatus(
@@ -251,7 +257,7 @@ async function openaiArticle(
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            model: process.env.OPENAI_MODEL ?? "gpt-4o",
+            model: requestedModel,
             response_format: { type: "json_object" },
             temperature: 0.9,
             max_tokens: 8000,
@@ -276,8 +282,10 @@ async function openaiArticle(
           stage: "writing",
           label:
             attempt === 1
-              ? "Trying OpenAI…"
-              : `OpenAI failed — retrying (${attempt}/${attempts})…`,
+              ? `Trying ${requestedModel}…`
+              : `${requestedModel} unavailable — retry ${attempt}/${attempts}…`,
+          pct: WRITE_PCT_START,
+          reset: true,
         }),
     },
   );
@@ -286,7 +294,7 @@ async function openaiArticle(
   let writing = false;
   let lastBump = 0;
   let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
-  let model = process.env.OPENAI_MODEL ?? "gpt-4o";
+  let model = requestedModel;
 
   await consumeSse(res, (payload) => {
     let chunk: {
@@ -308,14 +316,15 @@ async function openaiArticle(
         lastBump = now;
         onStage?.({
           stage: "writing",
-          label: "Writing with OpenAI…",
+          label: `Writing with ${requestedModel}…`,
           pct: WRITE_PCT_START,
+          reset: true,
         });
       } else if (now - lastBump >= 700) {
         lastBump = now;
         onStage?.({
           stage: "writing",
-          label: "Writing with OpenAI…",
+          label: `Writing with ${requestedModel}…`,
           pct: writingPct(raw.length),
         });
       }
@@ -356,18 +365,16 @@ async function geminiArticle(
     process.env.GEMINI_MODEL,
     "gemini-3.8-flash",
     "gemini-3.7-flash",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.5-flash",
-    "gemini-flash-latest",
     "gemini-3.5-flash",
     "gemini-flash-latest",
   ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
 
   const modelErrors: string[] = [];
 
-  for (const model of models) {
+  for (let mi = 0; mi < models.length; mi++) {
+    const model = models[mi];
+    const nextModel = models[mi + 1];
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:streamGenerateContent?alt=sse&key=${encodeURIComponent(key)}`;
 
     try {
@@ -392,7 +399,9 @@ async function geminiArticle(
                 generationConfig: {
                   responseMimeType: "application/json",
                   temperature: 0.9,
-                  maxOutputTokens: 8192,
+                  // Thinking models count reasoning tokens against this budget;
+                  // 8192 can truncate the JSON mid-stream.
+                  maxOutputTokens: 16384,
                 },
               }),
             },
@@ -401,14 +410,16 @@ async function geminiArticle(
         {
           attempts: 4,
           baseDelayMs: 4000,
-          label: "Gemini generateContent",
+          label: `Gemini ${model}`,
           onAttempt: (attempt, attempts) =>
             onStage?.({
               stage: "writing",
               label:
                 attempt === 1
-                  ? "Trying Gemini…"
-                  : `Gemini failed — retrying (${attempt}/${attempts})…`,
+                  ? `Trying ${model}…`
+                  : `${model} unavailable — retry ${attempt}/${attempts}…`,
+              pct: WRITE_PCT_START,
+              reset: true,
             }),
         },
       );
@@ -447,14 +458,15 @@ async function geminiArticle(
             lastBump = now;
             onStage?.({
               stage: "writing",
-              label: "Writing with Gemini…",
+              label: `Writing with ${model}…`,
               pct: WRITE_PCT_START,
+              reset: true,
             });
           } else if (now - lastBump >= 700) {
             lastBump = now;
             onStage?.({
               stage: "writing",
-              label: "Writing with Gemini…",
+              label: `Writing with ${model}…`,
               pct: writingPct(raw.length),
             });
           }
@@ -479,8 +491,17 @@ async function geminiArticle(
         usage: usage ?? {},
       };
     } catch (err) {
-      modelErrors.push(err instanceof Error ? err.message : String(err));
-      onStage?.({ stage: "writing", label: "Gemini failed — retrying…" });
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[gemini:${model}] failed:`, msg);
+      modelErrors.push(`${model}: ${msg}`);
+      onStage?.({
+        stage: "writing",
+        label: nextModel
+          ? `${model} failed — trying ${nextModel}…`
+          : `${model} failed`,
+        pct: WRITE_PCT_START,
+        reset: true,
+      });
     }
   }
 
@@ -569,10 +590,8 @@ export async function generateFeaturedImageBytes(
               onStage?.({
                 label:
                   n === 1
-                    ? i === 0
-                      ? "Trying OpenAI for the featured image…"
-                      : "OpenAI failed — trying another model…"
-                    : `OpenAI image failed — retrying (${n}/${total})…`,
+                    ? `Trying ${model} for the featured image…`
+                    : `${model} unavailable — retry ${n}/${total}…`,
               }),
           },
         );
@@ -602,9 +621,9 @@ export async function generateFeaturedImageBytes(
         onStage?.({
           label: last
             ? geminiKey
-              ? "OpenAI image failed — trying Gemini…"
-              : "OpenAI image failed"
-            : "OpenAI failed — trying another model…",
+              ? `${model} failed — trying Gemini…`
+              : `${model} failed`
+            : `${model} failed — trying ${openaiModels[i + 1]}…`,
         });
         if (isImageQuota(err)) break;
       }
@@ -624,12 +643,6 @@ export async function generateFeaturedImageBytes(
       const model = models[i];
       const last = i === models.length - 1;
       try {
-        onStage?.({
-          label:
-            i === 0
-              ? "Trying Gemini for the featured image…"
-              : "Gemini failed — trying another model…",
-        });
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
         const res = await withRetry(
           () =>
@@ -656,10 +669,8 @@ export async function generateFeaturedImageBytes(
               onStage?.({
                 label:
                   n === 1
-                    ? i === 0
-                      ? "Trying Gemini for the featured image…"
-                      : "Gemini failed — trying another model…"
-                    : `Gemini image failed — retrying (${n}/${total})…`,
+                    ? `Trying ${model} for the featured image…`
+                    : `${model} unavailable — retry ${n}/${total}…`,
               }),
           },
         );
@@ -697,8 +708,8 @@ export async function generateFeaturedImageBytes(
         errors.push(msg);
         onStage?.({
           label: last
-            ? "Gemini image failed"
-            : "Gemini failed — trying another model…",
+            ? `${model} failed`
+            : `${model} failed — trying ${models[i + 1]}…`,
         });
         if (isImageQuota(err)) break;
       }
@@ -858,6 +869,8 @@ export async function generateForContent(
         options.onStage?.({
           stage: "writing",
           label: `${name} failed — trying ${next === "openai" ? "OpenAI" : "Gemini"}…`,
+          pct: WRITE_PCT_START,
+          reset: true,
         });
       }
     }
