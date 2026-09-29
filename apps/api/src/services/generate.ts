@@ -356,7 +356,11 @@ async function geminiArticle(
     process.env.GEMINI_MODEL,
     "gemini-3.8-flash",
     "gemini-3.7-flash",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
     "gemini-3.5-flash",
     "gemini-flash-latest",
   ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
@@ -613,7 +617,6 @@ export async function generateFeaturedImageBytes(
       ...cap.gemini.models,
       "gemini-3.1-flash-image",
       "gemini-2.5-flash-image",
-      "gemini-2.0-flash-preview-image-generation",
       "imagen-4.0-generate-001",
     ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
 
