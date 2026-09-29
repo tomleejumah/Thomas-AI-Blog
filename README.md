@@ -45,3 +45,11 @@ pm2 logs ace-api
 pm2 logs ace-api --lines 200
 curl -sS http://127.0.0.1:4010/health
 ```
+
+### Self-hosted Actions
+
+API Deploy uses `runs-on: self-hosted` (`~/actions-runner-ace`).
+
+- Keep **Cloudflare WARP Connected** on the server (`warp=on`) — required for the Actions broker; without it jobs queue forever.
+- Tailscale SSH stays (`100.64.0.0/10` excluded). Don’t run this runner under pm2 + systemd together.
+- Don’t re-run an old Deploy after a newer success. Shared checklist: `~/ACTIONS-OPS.md` on the server.

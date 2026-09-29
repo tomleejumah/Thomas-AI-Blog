@@ -88,7 +88,7 @@ function userPayload(
     provider: string;
     answers: string[];
     sources: Array<{ title: string; url: string; snippet: string }>;
-  } | null
+  } | null,
 ) {
   const shapes = [
     "narrative journey with sensory scenes",
@@ -171,7 +171,10 @@ function stubArticle(title: string, language: string): GeneratedArticle {
 }
 
 function parseArticleJson(raw: string): GeneratedArticle {
-  const cleaned = raw.replace(/^```json\s*/i, "").replace(/```$/i, "").trim();
+  const cleaned = raw
+    .replace(/^```json\s*/i, "")
+    .replace(/```$/i, "")
+    .trim();
   return JSON.parse(cleaned) as GeneratedArticle;
 }
 
@@ -232,7 +235,7 @@ async function openaiArticle(
   brief?: string,
   site?: SiteCtx,
   research?: ResearchCtx | null,
-  onStage?: OnStage
+  onStage?: OnStage,
 ) {
   const key = process.env.OPENAI_API_KEY;
   if (!key) return null;
@@ -262,7 +265,7 @@ async function openaiArticle(
             ],
           }),
         },
-        (status, text) => providerHttpError("OpenAI", status, text)
+        (status, text) => providerHttpError("OpenAI", status, text),
       ),
     {
       attempts: 3,
@@ -276,7 +279,7 @@ async function openaiArticle(
               ? "Trying OpenAI…"
               : `OpenAI failed — retrying (${attempt}/${attempts})…`,
         }),
-    }
+    },
   );
 
   let raw = "";
@@ -340,7 +343,7 @@ async function geminiArticle(
   brief?: string,
   site?: SiteCtx,
   research?: ResearchCtx | null,
-  onStage?: OnStage
+  onStage?: OnStage,
 ) {
   const key = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!key) return null;
@@ -351,9 +354,11 @@ async function geminiArticle(
   // pinning one model.
   const models = [
     process.env.GEMINI_MODEL,
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.1-flash",
-    "gemini-2.5-flash",
+    "gemini-3.5-flash",
+    "gemini-flash-latest",
   ].filter((m, i, a): m is string => Boolean(m) && a.indexOf(m) === i);
 
   const modelErrors: string[] = [];
@@ -387,11 +392,11 @@ async function geminiArticle(
                 },
               }),
             },
-            (status, text) => providerHttpError("Gemini", status, text)
+            (status, text) => providerHttpError("Gemini", status, text),
           ),
         {
-          attempts: 3,
-          baseDelayMs: 1000,
+          attempts: 4,
+          baseDelayMs: 4000,
           label: "Gemini generateContent",
           onAttempt: (attempt, attempts) =>
             onStage?.({
@@ -401,18 +406,25 @@ async function geminiArticle(
                   ? "Trying Gemini…"
                   : `Gemini failed — retrying (${attempt}/${attempts})…`,
             }),
-        }
+        },
       );
 
       let raw = "";
       let writing = false;
       let lastBump = 0;
-      let usage: { prompt_tokens?: number; completion_tokens?: number } | undefined;
+      let usage:
+        | { prompt_tokens?: number; completion_tokens?: number }
+        | undefined;
 
       await consumeSse(res, (payload) => {
         let chunk: {
-          candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-          usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+          candidates?: Array<{
+            content?: { parts?: Array<{ text?: string }> };
+          }>;
+          usageMetadata?: {
+            promptTokenCount?: number;
+            candidatesTokenCount?: number;
+          };
         };
         try {
           chunk = JSON.parse(payload);
@@ -420,7 +432,9 @@ async function geminiArticle(
           return;
         }
         const piece =
-          chunk.candidates?.[0]?.content?.parts?.map((p) => p.text ?? "").join("") ?? "";
+          chunk.candidates?.[0]?.content?.parts
+            ?.map((p) => p.text ?? "")
+            .join("") ?? "";
         if (piece) {
           raw += piece;
           const now = Date.now();
@@ -483,7 +497,7 @@ function naturalPhotoPrompt(prompt: string) {
 /** Featured image — OpenAI first, Gemini native image as fallback */
 export async function generateFeaturedImageBytes(
   prompt: string,
-  onStage?: (stage: { pct?: number; label: string }) => void
+  onStage?: (stage: { pct?: number; label: string }) => void,
 ): Promise<{
   bytes: Buffer;
   mime: string;
@@ -499,7 +513,9 @@ export async function generateFeaturedImageBytes(
   const openaiKey = process.env.OPENAI_API_KEY;
   const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY;
   if (!openaiKey && !geminiKey) {
-    throw new Error("No image API keys set. Add OpenAI or Gemini under Maintenance.");
+    throw new Error(
+      "No image API keys set. Add OpenAI or Gemini under Maintenance.",
+    );
   }
 
   const openaiModels = [
@@ -538,7 +554,7 @@ export async function generateFeaturedImageBytes(
                 },
                 body: JSON.stringify(payload),
               },
-              (status, text) => providerHttpError("OpenAI image", status, text)
+              (status, text) => providerHttpError("OpenAI image", status, text),
             ),
           {
             attempts: 2,
@@ -554,7 +570,7 @@ export async function generateFeaturedImageBytes(
                       : "OpenAI failed — trying another model…"
                     : `OpenAI image failed — retrying (${n}/${total})…`,
               }),
-          }
+          },
         );
         const data = (await res.json()) as {
           data?: Array<{ b64_json?: string; url?: string }>;
@@ -570,7 +586,8 @@ export async function generateFeaturedImageBytes(
         }
         if (item?.url) {
           const imgRes = await fetch(item.url);
-          if (!imgRes.ok) throw new Error(`OpenAI image download ${imgRes.status}`);
+          if (!imgRes.ok)
+            throw new Error(`OpenAI image download ${imgRes.status}`);
           const buf = Buffer.from(await imgRes.arrayBuffer());
           return { bytes: buf, mime: "image/png", provider: "openai", model };
         }
@@ -605,7 +622,10 @@ export async function generateFeaturedImageBytes(
       const last = i === models.length - 1;
       try {
         onStage?.({
-          label: i === 0 ? "Trying Gemini for the featured image…" : "Gemini failed — trying another model…",
+          label:
+            i === 0
+              ? "Trying Gemini for the featured image…"
+              : "Gemini failed — trying another model…",
         });
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiKey)}`;
         const res = await withRetry(
@@ -622,7 +642,7 @@ export async function generateFeaturedImageBytes(
                   },
                 }),
               },
-              (status, text) => providerHttpError("Gemini image", status, text)
+              (status, text) => providerHttpError("Gemini image", status, text),
             ),
           {
             attempts: 2,
@@ -638,7 +658,7 @@ export async function generateFeaturedImageBytes(
                       : "Gemini failed — trying another model…"
                     : `Gemini image failed — retrying (${n}/${total})…`,
               }),
-          }
+          },
         );
         const data = (await res.json()) as {
           candidates?: Array<{
@@ -673,7 +693,9 @@ export async function generateFeaturedImageBytes(
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(msg);
         onStage?.({
-          label: last ? "Gemini image failed" : "Gemini failed — trying another model…",
+          label: last
+            ? "Gemini image failed"
+            : "Gemini failed — trying another model…",
         });
         if (isImageQuota(err)) break;
       }
@@ -688,7 +710,7 @@ export async function generateFeaturedImageBytes(
 
 export async function generateForContent(
   contentId: string,
-  options: GenerateOptions = {}
+  options: GenerateOptions = {},
 ) {
   const content = await prisma.contentItem.findUnique({
     where: { id: contentId },
@@ -699,7 +721,11 @@ export async function generateForContent(
   const lang = content.language;
   const prefer = options.provider ?? "auto";
 
-  options.onStage?.({ stage: "researching", label: "Loading site context…", pct: 5 });
+  options.onStage?.({
+    stage: "researching",
+    label: "Loading site context…",
+    pct: 5,
+  });
 
   const [facts, rankedLinks] = await Promise.all([
     prisma.businessFact.findMany({
@@ -711,7 +737,7 @@ export async function generateForContent(
       content.siteId,
       content.title,
       content.focusKeyword ? [content.focusKeyword] : [],
-      { limit: 15, excludeContentId: content.id }
+      { limit: 15, excludeContentId: content.id },
     ),
   ]);
 
@@ -723,7 +749,11 @@ export async function generateForContent(
     linkTargets: rankedLinks.map((p) => ({ title: p.title, url: p.url })),
   };
 
-  options.onStage?.({ stage: "researching", label: "Researching topic…", pct: 10 });
+  options.onStage?.({
+    stage: "researching",
+    label: "Researching topic…",
+    pct: 10,
+  });
 
   let research: ResearchCtx | null = null;
   let researchError: string | undefined;
@@ -766,7 +796,9 @@ export async function generateForContent(
   let fallbackFrom: string | undefined;
 
   const hasOpenAI = Boolean(process.env.OPENAI_API_KEY);
-  const hasGemini = Boolean(process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY);
+  const hasGemini = Boolean(
+    process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY,
+  );
 
   const order: Array<"openai" | "gemini"> = [];
   if (prefer === "gemini") {
@@ -797,7 +829,7 @@ export async function generateForContent(
               options.brief,
               siteCtx,
               research,
-              options.onStage
+              options.onStage,
             )
           : await geminiArticle(
               content.title,
@@ -805,7 +837,7 @@ export async function generateForContent(
               options.brief,
               siteCtx,
               research,
-              options.onStage
+              options.onStage,
             );
       if (providerErrors.length > 0) {
         fallbackFrom = providerErrors[0]?.startsWith("OpenAI")
@@ -838,7 +870,7 @@ export async function generateForContent(
     throw new Error(
       summary
         ? `All AI providers failed. ${summary}`
-        : "All AI providers failed. Please try Generate again in a minute."
+        : "All AI providers failed. Please try Generate again in a minute.",
     );
   }
 
@@ -849,7 +881,10 @@ export async function generateForContent(
     data: {
       title: article.title || content.title,
       bodyHtml: article.bodyHtml,
-      slug: article.slug || keywordSlug(article.focusKeyword, article.title || content.title) || undefined,
+      slug:
+        article.slug ||
+        keywordSlug(article.focusKeyword, article.title || content.title) ||
+        undefined,
       focusKeyword: article.focusKeyword,
       seoTitle: article.seoTitle,
       metaDescription: article.metaDescription,
@@ -859,7 +894,12 @@ export async function generateForContent(
   });
 
   if (article.bodyHtml) {
-    await recordAppliedLinks(content.siteId, "content", content.id, article.bodyHtml);
+    await recordAppliedLinks(
+      content.siteId,
+      "content",
+      content.id,
+      article.bodyHtml,
+    );
   }
 
   const estimatedUsd = estimateUsd({
@@ -884,7 +924,11 @@ export async function generateForContent(
 
   let hasFeaturedImage = false;
   if (options.withImage !== false) {
-    options.onStage?.({ stage: "saving", label: "Trying featured image…", pct: 92 });
+    options.onStage?.({
+      stage: "saving",
+      label: "Trying featured image…",
+      pct: 92,
+    });
     try {
       const img = await generateFeaturedImageBytes(
         article.imagePrompt ?? `Natural lifestyle photo for: ${article.title}`,
@@ -893,7 +937,7 @@ export async function generateForContent(
             stage: "saving",
             label: s.label,
             pct: s.pct ?? 92,
-          })
+          }),
       );
       if (img) {
         saveFeaturedImage(content.id, img.bytes);
