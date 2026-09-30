@@ -4,6 +4,7 @@ import { estimateUsd } from "../lib/costs";
 import { providerHttpError } from "../lib/providerErrors";
 import { withRetry, fetchWithStatus } from "../lib/retry";
 import { copyFeaturedImage } from "../lib/featuredStore";
+import { buildLinkPolicy, stripDisallowedLinks } from "../lib/linkGuard";
 
 const LANG_NAMES: Record<string, string> = { en: "English", pt: "Portuguese", fr: "French" };
 
@@ -234,6 +235,7 @@ export async function localizeContent(
   if (!parent.bodyHtml) throw new Error("Parent content has no body yet — generate it first");
 
   const facts = await prisma.businessFact.findMany({ where: { siteId: parent.siteId } });
+  const linkPolicy = buildLinkPolicy(parent.site.baseUrl, facts);
 
   const results = [];
   for (let i = 0; i < languages.length; i++) {
@@ -249,6 +251,12 @@ export async function localizeContent(
       facts.map((f) => ({ key: f.key, value: f.value })),
       onStage
     );
+
+    const guarded = stripDisallowedLinks(article.bodyHtml ?? "", linkPolicy);
+    if (guarded.removed.length) {
+      console.warn("[linkGuard] localize removed links:", guarded.removed.join(", "));
+    }
+    article.bodyHtml = guarded.html;
 
     const existing = await prisma.contentItem.findFirst({
       where: { parentContentId: parent.id, language },
