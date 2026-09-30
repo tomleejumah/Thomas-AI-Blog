@@ -7,6 +7,12 @@ import { withRetry, fetchWithStatus } from "../lib/retry";
 import { researchTopic } from "./research";
 import { rankLinkTargets, recordAppliedLinks } from "./linking";
 import { saveFeaturedImage } from "../lib/featuredStore";
+import {
+  buildLinkPolicy,
+  filterSources,
+  stripDisallowedLinks,
+  LINK_POLICY_FACT_KEYS,
+} from "../lib/linkGuard";
 
 /** Image 429 is quota, not a blip — do not retry it. */
 const IMAGE_RETRY_STATUSES = [500, 502, 503, 504];
@@ -65,7 +71,8 @@ RANK MATH — exact-phrase tests (this is how the plugin scores 0–100):
 - metaDescription: 140–160 characters, includes focusKeyword once.
 - slug: kebab-case of focusKeyword only (e.g. family-yacht-charter-lisbon).
 - First 100 words of bodyHtml must include focusKeyword.
-- Include at least 2 internal <a href> from the provided site links (if any) and 1 reputable external source when research URLs exist.
+- Include at least 2 internal <a href> from the provided site links (if any).
+- External links: only if site.linkPolicy.externalLinks is true, at most 1, to an authoritative non-commercial source (government, tourism board, regulator, Wikipedia). NEVER link to, or recommend by name, any domain in site.linkPolicy.blockedDomains or any business that competes with this site (other charter/rental/service companies in the same niche). If in doubt, do not link out.
 - Do not skip the keyword because a fancier synonym “sounds better” — Rank Math only counts the exact string.
 
 STRUCTURE VARIETY — critical (do NOT reuse a template):
@@ -87,6 +94,7 @@ function userPayload(
     category?: string | null;
     businessFacts?: Array<{ key: string; value: string }>;
     linkTargets?: Array<{ title: string; url: string }>;
+    linkPolicy?: { blockedDomains: string[]; externalLinks: boolean };
   },
   research?: {
     provider: string;
@@ -117,6 +125,7 @@ function userPayload(
           category: site.category ?? null,
           businessFacts: site.businessFacts?.length ? site.businessFacts : null,
           linkTargets: site.linkTargets?.length ? site.linkTargets : null,
+          linkPolicy: site.linkPolicy ?? null,
           factsInstruction:
             "Use ONLY these approved business facts. Never invent prices, phones, licenses, guarantees, or services not listed.",
           linkingInstruction:
@@ -188,6 +197,7 @@ type SiteCtx = {
   category?: string | null;
   businessFacts?: Array<{ key: string; value: string }>;
   linkTargets?: Array<{ title: string; url: string }>;
+  linkPolicy?: { blockedDomains: string[]; externalLinks: boolean };
 };
 type ResearchCtx = {
   provider: string;
@@ -755,11 +765,19 @@ export async function generateForContent(
     ),
   ]);
 
+  const linkPolicy = buildLinkPolicy(content.site.baseUrl, facts);
+
   const siteCtx: SiteCtx = {
     name: content.site.name,
     baseUrl: content.site.baseUrl,
     category: content.category?.name ?? null,
-    businessFacts: facts.map((f) => ({ key: f.key, value: f.value })),
+    businessFacts: facts
+      .filter((f) => !LINK_POLICY_FACT_KEYS.includes(f.key.trim().toLowerCase()))
+      .map((f) => ({ key: f.key, value: f.value })),
+    linkPolicy: {
+      blockedDomains: linkPolicy.blocked,
+      externalLinks: linkPolicy.allowExternal,
+    },
     linkTargets: rankedLinks.map((p) => ({ title: p.title, url: p.url })),
   };
 
@@ -783,7 +801,7 @@ export async function generateForContent(
       research = {
         provider: packet.provider,
         answers: packet.answers,
-        sources: packet.sources,
+        sources: filterSources(packet.sources, linkPolicy),
       };
       await prisma.aiUsage.create({
         data: {
@@ -879,6 +897,13 @@ export async function generateForContent(
   if (live) {
     article = live.article;
     usage = live.usage;
+    if (article.bodyHtml) {
+      const guarded = stripDisallowedLinks(article.bodyHtml, linkPolicy);
+      if (guarded.removed.length) {
+        console.warn("[linkGuard] removed links:", guarded.removed.join(", "));
+      }
+      article.bodyHtml = guarded.html;
+    }
   } else if (order.length === 0) {
     article = stubArticle(content.title, lang);
   } else {
