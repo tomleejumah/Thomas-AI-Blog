@@ -30,9 +30,15 @@ type Content = {
 
 function extractLinks(html?: string | null) {
   if (!html) return [] as Array<{ href: string; text: string }>;
-  return [...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)].map((m) => ({
+  return [
+    ...html.matchAll(/<a[^>]+href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi),
+  ].map((m) => ({
     href: m[1],
-    text: m[2].replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim() || m[1],
+    text:
+      m[2]
+        .replace(/<[^>]+>/g, "")
+        .replace(/\s+/g, " ")
+        .trim() || m[1],
   }));
 }
 
@@ -70,8 +76,8 @@ function FeaturedPreview({ id }: { id: string }) {
   if (!src) {
     return (
       <p>
-        <strong>Image</strong> — none yet. Generated on Generate / send to WordPress when the image
-        key has credit.
+        <strong>Image</strong> — none yet. Generated on Generate / send to
+        WordPress when the image key has credit.
       </p>
     );
   }
@@ -97,10 +103,17 @@ const FILTERS: { id: Filter; label: string }[] = [
 
 function matchesFilter(c: Content, f: Filter) {
   if (f === "all") return true;
-  if (f === "published") return !!c.wpUrl || c.status === "PUBLISHED" || c.status === "UPDATED";
-  if (f === "review") return c.status === "HUMAN_REVIEW" || c.status === "APPROVED";
+  if (f === "published")
+    return !!c.wpUrl || c.status === "PUBLISHED" || c.status === "UPDATED";
+  if (f === "review")
+    return c.status === "HUMAN_REVIEW" || c.status === "APPROVED";
   if (f === "generated")
-    return !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED" && c.status !== "UPDATED";
+    return (
+      !!c.bodyHtml &&
+      !c.wpUrl &&
+      c.status !== "PUBLISHED" &&
+      c.status !== "UPDATED"
+    );
   if (f === "idea") return !c.bodyHtml && !c.wpUrl;
   return true;
 }
@@ -138,7 +151,9 @@ export default function DashboardPage() {
   const [createCategories, setCreateCategories] = useState<
     Array<{ id: string; name: string }>
   >([]);
-  const [categoryMode, setCategoryMode] = useState<"existing" | "custom">("existing");
+  const [categoryMode, setCategoryMode] = useState<"existing" | "custom">(
+    "existing",
+  );
   const [customCategory, setCustomCategory] = useState("");
   const [preview, setPreview] = useState<Content | null>(null);
   const [edit, setEdit] = useState<Content | null>(null);
@@ -168,7 +183,7 @@ export default function DashboardPage() {
 
   const filtered = useMemo(
     () => contents.filter((c) => matchesFilter(c, filter)),
-    [contents, filter]
+    [contents, filter],
   );
 
   const load = useCallback(async () => {
@@ -190,7 +205,7 @@ export default function DashboardPage() {
   async function pollJob<T = unknown>(
     id: string,
     kind: JobKind,
-    path: "generate" | "publish" | "localize"
+    path: "generate" | "publish" | "localize",
   ): Promise<T> {
     while (true) {
       const status = await api<{
@@ -202,7 +217,13 @@ export default function DashboardPage() {
       }>(`/content/${id}/${path}/status`).catch((err: unknown) => {
         const m = err instanceof Error ? err.message : String(err);
         if (/no (publish|generation|localization) job/i.test(m)) {
-          return { status: "running" as const, pct: 0, label: "", result: undefined, error: undefined };
+          return {
+            status: "running" as const,
+            pct: 0,
+            label: "",
+            result: undefined,
+            error: undefined,
+          };
         }
         throw err;
       });
@@ -212,14 +233,15 @@ export default function DashboardPage() {
           ? {
               ...prev,
               pct: status.pct,
-/*               pct: Math.max(prev.pct, status.pct), */
+              /*               pct: Math.max(prev.pct, status.pct), */
               label: status.label || prev.label,
             }
-          : prev
+          : prev,
       );
 
       if (status.status === "done") return (status.result ?? {}) as T;
-      if (status.status === "error") throw new Error(status.error || `${path} failed`);
+      if (status.status === "error")
+        throw new Error(status.error || `${path} failed`);
 
       await new Promise((r) => setTimeout(r, 700));
     }
@@ -251,7 +273,7 @@ export default function DashboardPage() {
       return;
     }
     api<{ categories: Array<{ id: string; name: string }> }>(
-      `/sites/${createSiteId}/categories`
+      `/sites/${createSiteId}/categories`,
     )
       .then((d) => setCreateCategories(d.categories ?? []))
       .catch(() => setCreateCategories([]));
@@ -269,7 +291,9 @@ export default function DashboardPage() {
           ? String(fd.get("categoryId") ?? "") || undefined
           : undefined,
       customCategory:
-        categoryMode === "custom" ? customCategory.trim() || undefined : undefined,
+        categoryMode === "custom"
+          ? customCategory.trim() || undefined
+          : undefined,
       title: String(fd.get("title") ?? ""),
       language: String(fd.get("language") ?? "en"),
       brief: String(fd.get("brief") ?? "") || undefined,
@@ -323,7 +347,11 @@ export default function DashboardPage() {
       const res = await pollJob<{
         provider: string;
         fallbackFrom?: string | null;
-        usage?: { estimatedUsdLabel?: string; inputTokens?: number; outputTokens?: number };
+        usage?: {
+          estimatedUsdLabel?: string;
+          inputTokens?: number;
+          outputTokens?: number;
+        };
       }>(id, "generate", "generate");
       await finishJob();
       const via = res.fallbackFrom
@@ -332,7 +360,7 @@ export default function DashboardPage() {
       ok(
         res.usage?.estimatedUsdLabel
           ? `Generated via ${via} · ${res.usage.estimatedUsdLabel}`
-          : `Generated via ${via}`
+          : `Generated via ${via}`,
       );
       await load();
     } catch (err) {
@@ -358,14 +386,18 @@ export default function DashboardPage() {
         method: "POST",
         body: JSON.stringify({ languages: [language] }),
       });
-      const res = await pollJob<{ children: Array<{ id: string; language: string; title: string }> }>(
-        id,
-        "localize",
-        "localize"
-      );
+      const res = await pollJob<{
+        children: Array<{ id: string; language: string; title: string }>;
+      }>(id, "localize", "localize");
       await finishJob();
-      const langs = (res.children ?? []).map((c) => c.language.toUpperCase()).join(", ");
-      ok(langs ? `Translations ready: ${langs}. Open each card to preview, then send to WordPress.` : "Translations saved");
+      const langs = (res.children ?? [])
+        .map((c) => c.language.toUpperCase())
+        .join(", ");
+      ok(
+        langs
+          ? `Translations ready: ${langs}. Open each card to preview, then send to WordPress.`
+          : "Translations saved",
+      );
       await load();
     } catch (err) {
       setJob(null);
@@ -418,7 +450,7 @@ export default function DashboardPage() {
       const hasImage = res.hasFeaturedImage === true;
       if (!hasImage) {
         const reason = friendlyError(
-          res.imageError || "Featured image was not attached."
+          res.imageError || "Featured image was not attached.",
         );
         const text = url
           ? `Draft on WordPress. Featured image skipped: ${reason}`
@@ -426,7 +458,11 @@ export default function DashboardPage() {
         setMsg(text);
         toastWarn(text);
       } else {
-        ok(url ? "Published to WordPress with featured image." : "Published draft");
+        ok(
+          url
+            ? "Published to WordPress with featured image."
+            : "Published draft",
+        );
       }
       await load();
     } catch (err) {
@@ -502,7 +538,7 @@ export default function DashboardPage() {
     setSelected((prev) =>
       prev.size === filtered.length && filtered.every((c) => prev.has(c.id))
         ? new Set()
-        : new Set(filtered.map((c) => c.id))
+        : new Set(filtered.map((c) => c.id)),
     );
   }
 
@@ -510,12 +546,16 @@ export default function DashboardPage() {
     const ids = [...selected];
     if (ids.length === 0) return;
     const linkedCount = contents.filter(
-      (c) => ids.includes(c.id) && (c.wpPostId || c.wpUrl)
+      (c) => ids.includes(c.id) && (c.wpPostId || c.wpUrl),
     ).length;
     setDialog({ kind: "bulk-delete", ids, linkedCount });
   }
 
-  async function confirmBulkDelete(ids: string[], deleteWp: boolean, linkedCount: number) {
+  async function confirmBulkDelete(
+    ids: string[],
+    deleteWp: boolean,
+    linkedCount: number,
+  ) {
     setDialog(null);
     setBulkBusy(true);
     setMsg("");
@@ -524,8 +564,8 @@ export default function DashboardPage() {
         ids.map((id) =>
           api(`/content/${id}?deleteWp=${deleteWp ? "true" : "false"}`, {
             method: "DELETE",
-          })
-        )
+          }),
+        ),
       );
       const failed = results.filter((r) => r.status === "rejected").length;
       const deleted = ids.length - failed;
@@ -595,7 +635,10 @@ export default function DashboardPage() {
       <div className="dash-head">
         <div>
           <h1>Dashboard</h1>
-          <p className="lead">Your content queue — generate, review, then send a draft to WordPress.</p>
+          <p className="lead">
+            Your content queue — generate, review, then send a draft to
+            WordPress.
+          </p>
         </div>
         <button
           type="button"
@@ -662,7 +705,13 @@ export default function DashboardPage() {
               {bulkBusy ? (
                 <span className="spinner sm" />
               ) : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  aria-hidden
+                >
                   <path
                     d="M3 6h18M8 6V4h8v2m1 0v14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V6h10z"
                     stroke="currentColor"
@@ -686,7 +735,8 @@ export default function DashboardPage() {
         ) : (
           filtered.map((c) => {
             const busy = busyId === c.id;
-            const canPublish = !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED";
+            const canPublish =
+              !!c.bodyHtml && !c.wpUrl && c.status !== "PUBLISHED";
             const rowJob = job?.id === c.id ? job : null;
             return (
               <div key={c.id} className={`row${busy ? " row-busy" : ""}`}>
@@ -712,7 +762,9 @@ export default function DashboardPage() {
                     <div className="row-link">
                       <a href={c.wpUrl} target="_blank" rel="noreferrer">
                         <span className="row-link-full">{c.wpUrl}</span>
-                        <span className="row-link-short">Open on WordPress</span>
+                        <span className="row-link-short">
+                          Open on WordPress
+                        </span>
                       </a>
                     </div>
                   ) : null}
@@ -723,7 +775,10 @@ export default function DashboardPage() {
                         <strong>{Math.round(rowJob.pct)}%</strong>
                       </div>
                       <div className="job-progress-track">
-                        <div className="job-progress-fill" style={{ width: `${rowJob.pct}%` }} />
+                        <div
+                          className="job-progress-fill"
+                          style={{ width: `${rowJob.pct}%` }}
+                        />
                       </div>
                     </div>
                   ) : null}
@@ -741,7 +796,11 @@ export default function DashboardPage() {
                         View
                       </a>
                     ) : (
-                      <button type="button" disabled={busy || bulkBusy} onClick={() => runGenerate(c.id)}>
+                      <button
+                        type="button"
+                        disabled={busy || bulkBusy}
+                        onClick={() => runGenerate(c.id)}
+                      >
                         {c.bodyHtml ? "Regenerate" : "Generate"}
                       </button>
                     )}
@@ -801,7 +860,9 @@ export default function DashboardPage() {
                         <button type="button" onClick={() => openEdit(c)}>
                           Edit
                         </button>
-                        {c.bodyHtml && !c.parentContentId && c.language === "en" ? (
+                        {c.bodyHtml &&
+                        !c.parentContentId &&
+                        c.language === "en" ? (
                           <button
                             type="button"
                             onClick={() => askLocalize(c.id)}
@@ -810,11 +871,18 @@ export default function DashboardPage() {
                           </button>
                         ) : null}
                         {canPublish ? (
-                          <button type="button" onClick={() => runApprovePublish(c.id)}>
+                          <button
+                            type="button"
+                            onClick={() => runApprovePublish(c.id)}
+                          >
                             Approve &amp; publish draft
                           </button>
                         ) : null}
-                        <button type="button" className="danger" onClick={() => askDelete(c.id)}>
+                        <button
+                          type="button"
+                          className="danger"
+                          onClick={() => askDelete(c.id)}
+                        >
                           Delete
                         </button>
                       </div>
@@ -832,7 +900,11 @@ export default function DashboardPage() {
           <form className="modal-card form" onSubmit={onCreate}>
             <div className="modal-head">
               <h2>New content</h2>
-              <button type="button" className="ghost" onClick={() => setShowCreate(false)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setShowCreate(false)}
+              >
                 Close
               </button>
             </div>
@@ -841,14 +913,16 @@ export default function DashboardPage() {
                 <strong>Title</strong> — topic for the article.
               </p>
               <p>
-                <strong>Brief</strong> — guidelines only (audience, tone, what not to invent). Not the full post.
+                <strong>Brief</strong> — guidelines only (audience, tone, what
+                not to invent). Not the full post.
               </p>
               <p>
                 <strong>Generate</strong> — AI writes the full blog + SEO.
               </p>
               <p>
-                <strong>Approve &amp; publish</strong> — one step: accept the draft and send it to WordPress as a{" "}
-                <em>draft</em> (featured image if the image API works).
+                <strong>Approve &amp; publish</strong> — one step: accept the
+                draft and send it to WordPress as a <em>draft</em> (featured
+                image if the image API works).
               </p>
             </div>
             <label>
@@ -909,7 +983,11 @@ export default function DashboardPage() {
             )}
             <label>
               Title / topic
-              <input name="title" required placeholder="Sunset yacht charter tips" />
+              <input
+                name="title"
+                required
+                placeholder="Sunset yacht charter tips"
+              />
             </label>
             <label>
               Language
@@ -921,7 +999,11 @@ export default function DashboardPage() {
             </label>
             <label>
               Brief (guidelines)
-              <textarea name="brief" rows={3} placeholder="Audience, tone, must-avoid claims…" />
+              <textarea
+                name="brief"
+                rows={3}
+                placeholder="Audience, tone, must-avoid claims…"
+              />
             </label>
             <label className="check">
               <input name="autoGenerate" type="checkbox" defaultChecked />
@@ -975,7 +1057,8 @@ export default function DashboardPage() {
                 <strong>Focus keyword</strong> — {preview.focusKeyword || "—"}
               </p>
               <p>
-                <strong>Meta description</strong> — {preview.metaDescription || "—"}
+                <strong>Meta description</strong> —{" "}
+                {preview.metaDescription || "—"}
               </p>
               <p>
                 <strong>Slug</strong> — {preview.slug || "—"}
@@ -1003,8 +1086,9 @@ export default function DashboardPage() {
                 )}
               </div>
               <p>
-                <strong>Rank Math</strong> — the fields above are what we send to Rank Math. The 0–100 score only
-                appears in the WordPress editor on the draft, before Publish.
+                <strong>Rank Math</strong> — the fields above are what we send
+                to Rank Math. The 0–100 score only appears in the WordPress
+                editor on the draft, before Publish.
                 {preview.rankMathVerified === true
                   ? " Fields were confirmed on WordPress after the last send."
                   : preview.rankMathVerified === false
@@ -1013,8 +1097,9 @@ export default function DashboardPage() {
               </p>
               <FeaturedPreview id={preview.id} />
               <p>
-                <strong>Translations</strong> — English masters: use Translate PT + FR on the card. Each language is
-                its own item to preview and send to WordPress.
+                <strong>Translations</strong> — English masters: use Translate
+                PT + FR on the card. Each language is its own item to preview
+                and send to WordPress.
               </p>
             </div>
             <div
@@ -1029,10 +1114,17 @@ export default function DashboardPage() {
 
       {edit ? (
         <div className="modal" role="dialog">
-          <form className="modal-card modal-wide form form-wide" onSubmit={saveEdit}>
+          <form
+            className="modal-card modal-wide form form-wide"
+            onSubmit={saveEdit}
+          >
             <div className="modal-head">
               <h2>Edit</h2>
-              <button type="button" className="ghost" onClick={() => setEdit(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setEdit(null)}
+              >
                 Cancel
               </button>
             </div>
@@ -1046,17 +1138,34 @@ export default function DashboardPage() {
             </label>
             <label>
               Focus keyword
-              <input name="focusKeyword" defaultValue={edit.focusKeyword ?? ""} />
+              <input
+                name="focusKeyword"
+                defaultValue={edit.focusKeyword ?? ""}
+              />
             </label>
             <label>
               Meta description
-              <textarea name="metaDescription" rows={2} defaultValue={edit.metaDescription ?? ""} />
+              <textarea
+                name="metaDescription"
+                rows={2}
+                defaultValue={edit.metaDescription ?? ""}
+              />
             </label>
             <div className="field">
               <span className="field-label">Article</span>
-              <span className="field-hint">Google Docs–style edit — formatting toolbar, no raw HTML.</span>
-              <DocEditor html={readableHtml(edit.bodyHtml)} onChange={setEditBodyHtml} />
-              <input type="hidden" name="bodyHtml" value={editBodyHtml} readOnly />
+              <span className="field-hint">
+                Google Docs–style edit — formatting toolbar, no raw HTML.
+              </span>
+              <DocEditor
+                html={readableHtml(edit.bodyHtml)}
+                onChange={setEditBodyHtml}
+              />
+              <input
+                type="hidden"
+                name="bodyHtml"
+                value={editBodyHtml}
+                readOnly
+              />
             </div>
             <button type="submit" disabled={busyId === edit.id}>
               Save
@@ -1070,7 +1179,12 @@ export default function DashboardPage() {
           <div className="modal-card form">
             <div className="modal-head">
               <h2>Delete content</h2>
-              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="icon-close"
+                aria-label="Close"
+                onClick={() => setDialog(null)}
+              >
                 ×
               </button>
             </div>
@@ -1079,11 +1193,16 @@ export default function DashboardPage() {
             </p>
             {dialog.linked ? (
               <p className="muted">
-                This item is linked to a WordPress draft. Choose whether to trash it in WP as well.
+                This item is linked to a WordPress draft. Choose whether to
+                trash it in WP as well.
               </p>
             ) : null}
             <div className="dialog-actions">
-              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setDialog(null)}
+              >
                 Cancel
               </button>
               {dialog.linked ? (
@@ -1121,34 +1240,49 @@ export default function DashboardPage() {
           <div className="modal-card form">
             <div className="modal-head">
               <h2>Delete selected</h2>
-              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="icon-close"
+                aria-label="Close"
+                onClick={() => setDialog(null)}
+              >
                 ×
               </button>
             </div>
             <p>
-              Delete <strong>{dialog.ids.length}</strong> selected item(s) from the dashboard?
+              Delete <strong>{dialog.ids.length}</strong> selected item(s) from
+              the dashboard?
             </p>
             {dialog.linkedCount > 0 ? (
               <p className="muted">
-                {dialog.linkedCount} linked to WordPress drafts. Choose whether to trash those in WP too.
+                {dialog.linkedCount} linked to WordPress drafts. Choose whether
+                to trash those in WP too.
               </p>
             ) : null}
             <div className="dialog-actions">
-              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setDialog(null)}
+              >
                 Cancel
               </button>
               {dialog.linkedCount > 0 ? (
                 <>
                   <button
                     type="button"
-                    onClick={() => confirmBulkDelete(dialog.ids, false, dialog.linkedCount)}
+                    onClick={() =>
+                      confirmBulkDelete(dialog.ids, false, dialog.linkedCount)
+                    }
                   >
                     Dashboard only
                   </button>
                   <button
                     type="button"
                     className="danger"
-                    onClick={() => confirmBulkDelete(dialog.ids, true, dialog.linkedCount)}
+                    onClick={() =>
+                      confirmBulkDelete(dialog.ids, true, dialog.linkedCount)
+                    }
                   >
                     Trash WP + delete
                   </button>
@@ -1172,7 +1306,12 @@ export default function DashboardPage() {
           <div className="modal-card form">
             <div className="modal-head">
               <h2>Translate</h2>
-              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="icon-close"
+                aria-label="Close"
+                onClick={() => setDialog(null)}
+              >
                 ×
               </button>
             </div>
@@ -1180,13 +1319,23 @@ export default function DashboardPage() {
               Translate <strong>{dialog.title}</strong> into one language.
             </p>
             <div className="dialog-actions">
-              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setDialog(null)}
+              >
                 Cancel
               </button>
-              <button type="button" onClick={() => runLocalize(dialog.id, "pt")}>
+              <button
+                type="button"
+                onClick={() => runLocalize(dialog.id, "pt")}
+              >
                 Portuguese
               </button>
-              <button type="button" onClick={() => runLocalize(dialog.id, "fr")}>
+              <button
+                type="button"
+                onClick={() => runLocalize(dialog.id, "fr")}
+              >
                 French
               </button>
             </div>
@@ -1199,16 +1348,28 @@ export default function DashboardPage() {
           <div className="modal-card form">
             <div className="modal-head">
               <h2>Publish draft</h2>
-              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="icon-close"
+                aria-label="Close"
+                onClick={() => setDialog(null)}
+              >
                 ×
               </button>
             </div>
             <p>
-              Approve <strong>{dialog.title}</strong> and send it to WordPress as a draft?
+              Approve <strong>{dialog.title}</strong> and send it to WordPress
+              as a draft?
             </p>
-            <p className="muted">You can trash the draft in WordPress anytime.</p>
+            <p className="muted">
+              You can trash the draft in WordPress anytime.
+            </p>
             <div className="dialog-actions">
-              <button type="button" className="ghost" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="ghost"
+                onClick={() => setDialog(null)}
+              >
                 Cancel
               </button>
               <button type="button" onClick={() => confirmPublish(dialog.id)}>
@@ -1224,7 +1385,12 @@ export default function DashboardPage() {
           <div className="modal-card form">
             <div className="modal-head">
               <h2>{dialog.title}</h2>
-              <button type="button" className="icon-close" aria-label="Close" onClick={() => setDialog(null)}>
+              <button
+                type="button"
+                className="icon-close"
+                aria-label="Close"
+                onClick={() => setDialog(null)}
+              >
                 ×
               </button>
             </div>

@@ -36,7 +36,8 @@ jobs:
         run: |
           set -euo pipefail
           cd /home/server/Apis/thomas-ai-blog/
-          if [ ! -x node_modules/.bin/tsc ]; then
+          # if [ ! -x node_modules/.bin/tsc ]; then
+          if [ ! -x node_modules/.bin/tsc ] || [ ! -d node_modules/sharp ]; then
             nice -n 10 npm ci --no-audit --no-fund
           else
             echo "reusing existing node_modules"

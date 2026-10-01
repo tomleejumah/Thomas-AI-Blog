@@ -20,6 +20,7 @@ import {
   verifyRankMathMeta,
 } from "../services/wordpress";
 import { localizeContent } from "../services/localize";
+import { optimizeForWeb } from "../lib/imageOptimize";
 import { proposeOptimization } from "../services/optimize";
 
 type PublishOpts = {
@@ -84,15 +85,17 @@ async function runPublish(
         : await generateFeaturedImageBytes(prompt, onStage);
       if (img) {
         if (!stored) saveFeaturedImage(id, img.bytes);
+        onStage({ pct: 76, label: "Optimizing image…" });
+        const web = await optimizeForWeb(img.bytes, img.mime);
         onStage({ pct: 78, label: "Uploading image to WordPress…" });
         media = await uploadWpMedia(
           auth.baseUrl,
           auth.username,
           auth.appPassword,
           {
-            bytes: img.bytes,
-            filename: `${content.slug || "featured"}-${Date.now()}.png`,
-            mime: img.mime,
+            bytes: web.bytes,
+            filename: `${content.slug || "featured"}-${Date.now()}.${web.ext}`,
+            mime: web.mime,
             alt: content.focusKeyword || content.title,
             title: content.title,
           },
