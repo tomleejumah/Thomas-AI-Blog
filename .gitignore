@@ -8,3 +8,4 @@ dist
 data/featured
 apps/api/prisma/*.db
 apps/api/prisma/*.db-journal
+apps/admin/tsconfig.tsbuildinfo

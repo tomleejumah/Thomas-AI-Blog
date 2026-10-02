@@ -4,7 +4,15 @@ import { estimateUsd } from "../lib/costs";
 import { providerHttpError } from "../lib/providerErrors";
 import { withRetry, fetchWithStatus } from "../lib/retry";
 import { copyFeaturedImage } from "../lib/featuredStore";
-import { buildLinkPolicy, stripDisallowedLinks } from "../lib/linkGuard";
+import {
+  buildLinkPolicy,
+  stripDisallowedLinks,
+  stripWrongLanguageLinks,
+  ensureInternalLinks,
+  rewriteLinks,
+  type Lang,
+} from "../lib/linkGuard";
+import { rankLinkTargets } from "./linking";
 
 const LANG_NAMES: Record<string, string> = { en: "English", pt: "Portuguese", fr: "French" };
 
@@ -256,7 +264,38 @@ export async function localizeContent(
     if (guarded.removed.length) {
       console.warn("[linkGuard] localize removed links:", guarded.removed.join(", "));
     }
-    article.bodyHtml = guarded.html;
+    // Internal links must point to the translated language: swap known
+    // translations, unlink the rest, then guarantee at least 3 internal links.
+    const kids = await prisma.contentItem.findMany({
+      where: {
+        siteId: parent.siteId,
+        language,
+        wpUrl: { not: null },
+        parentContentId: { not: null },
+      },
+      select: { wpUrl: true, parent: { select: { wpUrl: true } } },
+    });
+    const urlMap = new Map<string, string>();
+    for (const k of kids) {
+      if (k.wpUrl && k.parent?.wpUrl) {
+        urlMap.set(k.parent.wpUrl.trim().replace(/\/+$/, "").toLowerCase(), k.wpUrl);
+      }
+    }
+    const swapped = rewriteLinks(guarded.html, urlMap);
+    const sameLang = stripWrongLanguageLinks(swapped, linkPolicy.siteHost, language as Lang);
+    const targets = await rankLinkTargets(
+      parent.siteId,
+      article.title || parent.title,
+      article.focusKeyword ? [article.focusKeyword] : [],
+      { limit: 15, excludeContentId: parent.id, language: language as Lang, minResults: 3 },
+    );
+    article.bodyHtml = ensureInternalLinks(
+      sameLang.html,
+      targets,
+      3,
+      language as Lang,
+      linkPolicy.siteHost,
+    ).html;
 
     const existing = await prisma.contentItem.findFirst({
       where: { parentContentId: parent.id, language },

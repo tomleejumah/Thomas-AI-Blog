@@ -11,7 +11,10 @@ import {
   buildLinkPolicy,
   filterSources,
   stripDisallowedLinks,
+  stripWrongLanguageLinks,
+  ensureInternalLinks,
   LINK_POLICY_FACT_KEYS,
+  type Lang,
 } from "../lib/linkGuard";
 
 /** Image 429 is quota, not a blip — do not retry it. */
@@ -71,7 +74,7 @@ RANK MATH — exact-phrase tests (this is how the plugin scores 0–100):
 - metaDescription: 140–160 characters, includes focusKeyword once.
 - slug: kebab-case of focusKeyword only (e.g. family-yacht-charter-lisbon).
 - First 100 words of bodyHtml must include focusKeyword.
-- Include at least 2 internal <a href> from the provided site links (if any).
+- Include at least 3 internal <a href> links chosen from site.linkTargets (they are already in the article's language; never invent URLs or link to another language's pages).
 - External links: only if site.linkPolicy.externalLinks is true, at most 1, to an authoritative non-commercial source (government, tourism board, regulator, Wikipedia). NEVER link to, or recommend by name, any domain in site.linkPolicy.blockedDomains or any business that competes with this site (other charter/rental/service companies in the same niche). If in doubt, do not link out.
 - Do not skip the keyword because a fancier synonym “sounds better” — Rank Math only counts the exact string.
 
@@ -129,7 +132,7 @@ function userPayload(
           factsInstruction:
             "Use ONLY these approved business facts. Never invent prices, phones, licenses, guarantees, or services not listed.",
           linkingInstruction:
-            "Where natural, insert 2–5 contextual <a href> links to linkTargets using varied anchor text. Do not dump a link list.",
+            "Where natural, insert 3–5 contextual <a href> links to linkTargets using varied anchor text. Do not dump a link list.",
         }
       : null,
     research: research
@@ -761,7 +764,12 @@ export async function generateForContent(
       content.siteId,
       content.title,
       content.focusKeyword ? [content.focusKeyword] : [],
-      { limit: 15, excludeContentId: content.id },
+      {
+        limit: 15,
+        excludeContentId: content.id,
+        language: lang as Lang,
+        minResults: 3,
+      },
     ),
   ]);
 
@@ -902,7 +910,15 @@ export async function generateForContent(
       if (guarded.removed.length) {
         console.warn("[linkGuard] removed links:", guarded.removed.join(", "));
       }
-      article.bodyHtml = guarded.html;
+      const sameLang = stripWrongLanguageLinks(guarded.html, linkPolicy.siteHost, lang as Lang);
+      const ensured = ensureInternalLinks(
+        sameLang.html,
+        siteCtx.linkTargets ?? [],
+        3,
+        lang as Lang,
+        linkPolicy.siteHost,
+      );
+      article.bodyHtml = ensured.html;
     }
   } else if (order.length === 0) {
     article = stubArticle(content.title, lang);

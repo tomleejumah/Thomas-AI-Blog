@@ -21,6 +21,7 @@ import {
 } from "../services/wordpress";
 import { localizeContent } from "../services/localize";
 import { optimizeForWeb } from "../lib/imageOptimize";
+import { insertInlineImage } from "../lib/inlineImage";
 import { proposeOptimization } from "../services/optimize";
 
 type PublishOpts = {
@@ -55,7 +56,7 @@ async function runPublish(
     content.category?.wpCategoryId != null
       ? [content.category.wpCategoryId]
       : [];
-  const html = [
+  let html = [
     content.bodyHtml,
     content.schemaJson
       ? `<script type="application/ld+json">${JSON.stringify(content.schemaJson)}</script>`
@@ -120,6 +121,45 @@ async function runPublish(
     }
   } else {
     onStage({ pct: 70, label: "Skipping image (turned off)" });
+  }
+
+  // Second image for the main content area (client brief: featured + 1 inline)
+  if (body.withImage !== false && featuredMediaId) {
+    try {
+      onStage({ pct: 80, label: "Creating in-article image…" });
+      const heading = [...content.bodyHtml.matchAll(/<h2[^>]*>([\s\S]*?)<\/h2>/gi)]
+        .map((m) => m[1].replace(/<[^>]+>/g, "").trim())
+        .find(Boolean);
+      const inlinePrompt = `In-article editorial photo for a blog post titled "${content.title}"${
+        heading ? `, illustrating the section "${heading}"` : ""
+      }. Different scene and composition from the featured image. Natural light, documentary look.`;
+      const inl = await generateFeaturedImageBytes(inlinePrompt, onStage);
+      if (inl) {
+        const web2 = await optimizeForWeb(inl.bytes, inl.mime);
+        const m2 = await uploadWpMedia(auth.baseUrl, auth.username, auth.appPassword, {
+          bytes: web2.bytes,
+          filename: `${content.slug || "inline"}-inline-${Date.now()}.${web2.ext}`,
+          mime: web2.mime,
+          alt: content.focusKeyword || content.title,
+          title: `${content.title} (inline)`,
+        });
+        if (m2.source_url) {
+          html = insertInlineImage(html, m2.source_url, content.focusKeyword || content.title);
+        }
+        await prisma.aiUsage.create({
+          data: {
+            contentId: content.id,
+            provider: inl.provider,
+            model: inl.model,
+            operation: "generate_image",
+            estimatedUsd: inl.provider === "openai" ? 0.04 : 0.02,
+          },
+        });
+      }
+    } catch (err) {
+      console.warn("[inline image] skipped:", err instanceof Error ? err.message : err);
+      onStage({ label: "Skipping in-article image — continuing" });
+    }
   }
 
   if (body.withImage !== false && !featuredMediaId && !imageError) {
