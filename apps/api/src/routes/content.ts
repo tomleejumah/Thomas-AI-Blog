@@ -62,6 +62,12 @@ async function runPublish(
     where: { siteId: content.site.id, key: "h1_in_content" },
   });
   const withH1 = !(h1Fact && /^(off|no|false|none)$/i.test(h1Fact.value.trim()));
+  // One image by default: the featured image is reused as the in-content hero image
+  // (saves AI credits). Fact  inline_image: separate  restores a second generated image.
+  const inlineFact = await prisma.businessFact.findFirst({
+    where: { siteId: content.site.id, key: "inline_image" },
+  });
+  const separateInline = !!inlineFact && /^separate$/i.test(inlineFact.value.trim());
   const escHtml = (t: string) =>
     t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   let heroFigure = "";
@@ -133,8 +139,13 @@ async function runPublish(
     onStage({ pct: 70, label: "Skipping image (turned off)" });
   }
 
-  // Second image for the main content area (client brief: featured + 1 inline)
-  if (body.withImage !== false && featuredMediaId) {
+  // Single-image mode: reuse the uploaded featured image as the hero image in the body.
+  if (!separateInline && media?.source_url) {
+    heroFigure = inlineFigure(media.source_url, content.focusKeyword || content.title);
+  }
+
+  // Optional second image (only when the site fact  inline_image: separate  is set)
+  if (separateInline && body.withImage !== false && featuredMediaId) {
     try {
       onStage({ pct: 80, label: "Creating in-article image…" });
       const heading = [

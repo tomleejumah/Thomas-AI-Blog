@@ -1,7 +1,7 @@
 /** Insert a figure into the main content area: before the 2nd <h2>, else after the 2nd paragraph, else at the end. */
 export function inlineFigure(src: string, alt: string) {
   const esc = alt.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
-  return `<figure class="wp-block-image size-large"><img src="${src}" alt="${esc}" loading="lazy" /></figure>`;
+  return `<figure class="wp-block-image size-large ace-hero"><img src="${src}" alt="${esc}" loading="lazy" /></figure>`;
 }
 
 export function insertInlineImage(html: string, src: string, alt: string) {
